@@ -147,12 +147,16 @@ for row in rows:
     if tablo is None:
         continue  # hangi bolume ait oldugu anlasilamayan satirlari (or. site menusu) atliyoruz
 
-    # YENI: bu maddenin kendi linkine ayrica gidip icerigini ham bayt olarak cekiyoruz.
-    # .content (.text degil!) sayfayi/dosyayi STRING'e cevirmeden, oldugu gibi bayt
-    # dizisi olarak verir - BYTEA sutununa yazilacak veri tam olarak bu formatta olmali.
+    # GUNCELLEME: gercek sayfaya bakinca goruldu ki bu "-N.htm" sayfalari zaten
+    # maddenin kendi tam metnini (HTML olarak) iceriyor - ayri, tiklanabilir ya da
+    # gomulu bir PDF yok (debug ciktisinda 0 <a>/<iframe>/<embed>/<object> cikmasiyla
+    # bunu dogruladik). Yani bu sitede madde basina indirilebilir ayri bir PDF dosyasi
+    # sunulmuyor - icerigin kendisi bu HTML sayfasi. O yuzden arama mantigini kaldirip
+    # dogrudan bu sayfanin ham baytlarini kaydediyoruz (en bastaki basit yaklasim dogruymus).
     icerik_bytes = None
     try:
         icerik_response = requests.get(row["link"], headers=headers, timeout=15)
+        icerik_response.raise_for_status()
         icerik_bytes = icerik_response.content
     except requests.RequestException as e:
         print(f"Icerik cekilemedi ({row['link']}): {e}")
