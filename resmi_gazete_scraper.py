@@ -1,16 +1,24 @@
-import re
+import re                         # bulunan metinlerdeki fazla bosluk/satir basi gibi kirliligi temizlemek (regex ile) icin
 import requests                    # web sayfasini indirmek (HTTP GET istegi atmak) icin
 from bs4 import BeautifulSoup      # indirilen ham HTML'i parse edip icinde <a> gibi
                                     # etiketleri kolayca arayabilmek icin
 from urllib.parse import urljoin   # sayfadaki linkler bazen goreceli olur (orn. "/eskiler/2026/06/x.htm");
                                     # urljoin bunu ana URL ile birlestirip tam/tiklanabilir link yapar
 import csv                         # Python'in kendi built-in CSV yazma modulu, ekstra kurulum istemez
+import psycopg2                    # PostgreSQL'e Python'dan baglanmayi saglayan kutuphane
+from datetime import date          # gazette_issue tablosuna yazacagimiz tarihi olusturmak icin
+import time                        # her link icin ayri istek atarken aralara kisa bekleme koymak icin
+import os                          # .env icindeki sifreyi okuyabilmek icin
+from dotenv import load_dotenv     # .env dosyasindaki degiskenleri yuklemek icin
 
+load_dotenv()
+db_password = os.getenv("DB_PASSWORD")
 
 # URL formati: https://www.resmigazete.gov.tr/eskiler/YYYY/AA/YYYYAAGG.htm
 # Neden sabit (hardcoded)? ilk adım -> statik bir link verip o gunu cekmek
 # Ileride bu satir bir donguye girip her gun icin otomatik degisecek.
 URL = "https://www.resmigazete.gov.tr/eskiler/2026/06/20260603.htm"
+GAZETTE_DATE = date(2026, 6, 3)     # URL'deki tarihle ayni olmali
 
 # Neden User-Agent header ekliyoruz?
 # requests varsayilan olarak kendini "python-requests/x.x" diye tanitir, bazi siteler
@@ -47,7 +55,7 @@ soup = BeautifulSoup(response.text, "html.parser")
 rows = []
 bolum = ""   # su an hangi bolumun icinde oldugumuzu tutan degisken. Bas tarafta henuz
              # hicbir bolum basligina rastlanmadigi icin bos string ile basliyoruz.
- 
+
 for p in soup.find_all("p"):            # sayfadaki her <p> etiketini tek tek geziyoruz
     a = p.find("a")                     # bu <p>'nin icinde bir <a> (link) var mi diye bakiyoruz
                                          # not: bir <p> icinde birden fazla link olsa bile
@@ -71,7 +79,7 @@ for p in soup.find_all("p"):            # sayfadaki her <p> etiketini tek tek ge
             # .upper(): buyuk/kucuk harf farkindan etkilenmemek icin karsilastirmadan
             # once metni tamamen buyuk harfe ceviriyoruz
             bolum = baslik_metni   # bundan sonraki linkler artik bu yeni bolume ait sayilacak
- 
+
 print(f"{len(rows)} link bulundu.")
 
 # csv.DictWriter: her satiri sozluk (dict) olarak verip otomatik CSV formatina ceviren yardimci sinif
@@ -83,3 +91,91 @@ with open("resmi_gazete_test.csv", "w", newline="", encoding="utf-8-sig") as f:
     writer.writerows(rows)
 
 print("CSV yazildi: resmi_gazete_test.csv")
+
+# ============================================
+# VERITABANINA YAZMA
+# ============================================
+
+# DBeaver'da baglanirken kullandigin bilgilerin ayni: host, port, database, kullanici, sifre
+conn = psycopg2.connect(
+    host="localhost",
+    port=5432,
+    dbname="gazette_db",
+    user="postgres",
+    password=db_password,   # .env dosyasindaki DB_PASSWORD'den okunuyor
+)
+cur = conn.cursor()
+
+# 1) Once ana tabloya (gazette_issue) bu gunun kaydini atiyoruz.
+# RETURNING id: INSERT ile birlikte otomatik olusan id'yi de geri istiyoruz,
+# cunku bu id'yi asagida her maddeyle iliskilendirmemiz (gazette_id) lazim.
+cur.execute(
+    "INSERT INTO gazette_issue (date, url) VALUES (%s, %s) RETURNING id",
+    (GAZETTE_DATE, URL),
+)
+gazette_id = cur.fetchone()[0]
+print("gazette_issue id:", gazette_id)
+
+# 2) bolum metnini hangi tabloya yazacagimizi soyleyen basit bir eslesme.
+# Anahtar kelime ile kontrol ediyoruz (tam esitlik degil), cunku sitedeki
+# gercek metin "YASAMA BÖLÜMÜ" gibi ekstra kelimeler icerebilir.
+TABLO_ESLESME = {
+    "YASAMA": "legislative_section",
+    "YÜRÜTME": "executive_administrative_section",
+    "YARGI": "judicial_section",
+    "İLAN": "announcement_section",
+}
+
+# YENI: bazi resmi metinlerde kelimeler sapka (^) isaretli harflerle yazilir
+# (site ornegi: "İLÂN BÖLÜMÜ" - duz "İLAN" degil). Bu sapkali harfleri (Â, Î, Û)
+# duz karsiliklarina cevirmezsek, yukaridaki TABLO_ESLESME ile karsilastirma
+# tutmuyor ve o satirlar sessizce atlaniyor - ilk denemede basimiza gelen buydu.
+def normalize_bolum(metin):
+    degisim = {"Â": "A", "â": "a", "Î": "I", "î": "i", "Û": "U", "û": "u"}
+    for eski, yeni in degisim.items():
+        metin = metin.replace(eski, yeni)
+    return metin
+
+eklenen = 0
+for row in rows:
+    b = normalize_bolum(row["bolum"]).upper()
+    tablo = None
+    for anahtar, tablo_adi in TABLO_ESLESME.items():
+        if anahtar in b:
+            tablo = tablo_adi
+            break
+    if tablo is None:
+        continue  # hangi bolume ait oldugu anlasilamayan satirlari (or. site menusu) atliyoruz
+
+    # YENI: bu maddenin kendi linkine ayrica gidip icerigini ham bayt olarak cekiyoruz.
+    # .content (.text degil!) sayfayi/dosyayi STRING'e cevirmeden, oldugu gibi bayt
+    # dizisi olarak verir - BYTEA sutununa yazilacak veri tam olarak bu formatta olmali.
+    icerik_bytes = None
+    try:
+        icerik_response = requests.get(row["link"], headers=headers, timeout=15)
+        icerik_bytes = icerik_response.content
+    except requests.RequestException as e:
+        print(f"Icerik cekilemedi ({row['link']}): {e}")
+
+    # NOT: tablo adini f-string ile SQL'e gomuyoruz ama bu guvenli, cunku tablo
+    # degeri SADECE yukaridaki 4 sabit degerden biri olabilir, disaridan/siteden
+    # gelen bir metin degil. title/link/pdf_content gibi gercek veriler ise %s ile,
+    # yani parametreli sorgu ile gonderiliyor (SQL injection'a karsi dogru yontem budur).
+    cur.execute(
+        f"INSERT INTO {tablo} (gazette_id, title, link, pdf_content) VALUES (%s, %s, %s, %s)",
+        (
+            gazette_id,
+            row["title"],
+            row["link"],
+            psycopg2.Binary(icerik_bytes) if icerik_bytes is not None else None,
+        ),
+    )
+    eklenen += 1
+
+    time.sleep(0.5)   # her madde icin ayri istek attigimizdan, siteyi yormamak icin kisa bir mola
+
+conn.commit()   # buraya kadarki tum INSERT'leri kalici olarak veritabanina yaziyor
+print(f"{eklenen} satir veritabanina yazildi.")
+
+cur.close()
+conn.close()

@@ -1,2 +1,2 @@
-.venv/
-.claude/
+.env
+resmi_gazete_test.csv
