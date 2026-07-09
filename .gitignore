@@ -1,2 +1,5 @@
 .env
 resmi_gazete_test.csv
+__pycache__/
+tessdata/
+.venv/
