@@ -89,6 +89,9 @@ def normalize_bolum(metin):
         metin = metin.replace(eski, yeni)
     return metin
 
+def temizle_null_bayt(metin):
+    return metin.replace("\x00", "")
+
 conn = psycopg2.connect(
     host="localhost",
     port=5432,
@@ -129,32 +132,35 @@ try:
         try:
             icerik_response = requests.get(row["link"], headers=headers, timeout=15)
             icerik_response.raise_for_status()
+            
             if row["link"].lower().endswith(".pdf"):
-                metin = pdf_to_text_via_ocr(icerik_response.content)
+                # PDF'i indirip OCR ile metne çeviriyoruz
+                metin = temizle_null_bayt(pdf_to_text_via_ocr(icerik_response.content))
                 icerik_bytes = metin.encode("utf-8")
                 content_type = "pdf_ocr"
             else:
                 icerik_response.encoding = icerik_response.apparent_encoding
                 icerik_soup = BeautifulSoup(icerik_response.text, "html.parser")
-                metin = icerik_soup.get_text(separator="\n", strip=True)
+                metin = temizle_null_bayt(icerik_soup.get_text(separator="\n", strip=True))
                 icerik_bytes = metin.encode("utf-8")
                 content_type = "html_text"
+                
         except Exception as e:
-            print(f"Icerik cekilemedi ({row['link']}): {e}")
+            print(f"Icerik cekilemedi veya islenemedi ({row['link']}): {e}")
+            continue  # Hatalı maddeyi atla, tüm günü çökertme!
 
         cur.execute(
             f"INSERT INTO {tablo} (gazette_id, title, link, pdf_content, content_type) "
             f"VALUES (%s, %s, %s, %s, %s)",
             (
                 gazette_id,
-                row["title"],
-                row["link"],
+                temizle_null_bayt(row["title"]),
+                temizle_null_bayt(row["link"]),
                 psycopg2.Binary(icerik_bytes) if icerik_bytes is not None else None,
                 content_type,
             ),
         )
         eklenen += 1
-
         time.sleep(0.5)
 
     conn.commit()
