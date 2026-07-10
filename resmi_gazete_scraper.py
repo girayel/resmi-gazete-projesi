@@ -27,7 +27,7 @@ BITIS_TARIHI = date(2026, 6, 7)
 
 # ========== JOB: AYARLAR ==========
 BATCH_BOYUTU = 5
-BATCH_ARASI_BEKLEME_SN = 30
+BATCH_ARASI_BEKLEME_SN = 5
 BOS_KUYRUK_BEKLEME_SN = 300
 
 headers = {
@@ -232,7 +232,7 @@ def gunu_isle(cur, gun):
             ),
         )
         eklenen += 1
-        time.sleep(0.5)
+        time.sleep(0.2)
 
     print(f"{gun}: {eklenen} satir veritabanina yazildi.")
     return eklenen
