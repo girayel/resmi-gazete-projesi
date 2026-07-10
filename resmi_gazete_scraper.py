@@ -20,10 +20,15 @@ TESSDATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tessdat
 TESSERACT_CONFIG = f"--tessdata-dir {TESSDATA_DIR}"
 
 # Test icin 1 haftalik araligi kullaniyoruz. Tam yila gecmek icin:
-# BASLANGIC_TARIHI = date(2025, bugunun ayı, gunu)
+# BASLANGIC_TARIHI = date(2025, bugun.month, bugun.day)
 # BITIS_TARIHI = date.today()
 BASLANGIC_TARIHI = date(2026, 6, 1)
 BITIS_TARIHI = date(2026, 6, 7)
+
+# ========== JOB: AYARLAR ==========
+BATCH_BOYUTU = 10
+BATCH_ARASI_BEKLEME_SN = 30
+BOS_KUYRUK_BEKLEME_SN = 300
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -69,6 +74,50 @@ def gazette_id_var_mi(cur, gun):
     return sonuc[0] if sonuc else None
 
 
+# ========== JOB: HATA LOGLAMA ==========
+def error_log_tablosunu_olustur(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS error_log (
+            id serial PRIMARY KEY,
+            gazette_date date,
+            gazette_id integer,
+            link varchar,
+            seviye varchar(10),
+            hata_mesaji text,
+            olusturma_zamani timestamptz DEFAULT now()
+        )
+        """
+    )
+
+
+def error_log_yaz(cur, gun, gazette_id, link, seviye, mesaj):
+    cur.execute(
+        "INSERT INTO error_log (gazette_date, gazette_id, link, seviye, hata_mesaji) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (gun, gazette_id, link, seviye, mesaj),
+    )
+
+
+# ========== JOB: KUYRUK ==========
+def bekleyen_gunleri_getir(cur, baslangic, bitis, adet):
+    cur.execute(
+        "SELECT date FROM gazette_issue WHERE date BETWEEN %s AND %s "
+        "UNION "
+        "SELECT gazette_date FROM error_log WHERE seviye = 'gun' AND gazette_date BETWEEN %s AND %s",
+        (baslangic, bitis, baslangic, bitis),
+    )
+    islenmis = {row[0] for row in cur.fetchall()}
+
+    bekleyenler = []
+    gun = baslangic
+    while gun <= bitis and len(bekleyenler) < adet:
+        if gun not in islenmis:
+            bekleyenler.append(gun)
+        gun += timedelta(days=1)
+    return bekleyenler
+
+
 def madde_listesini_cikar(soup, url):
     rows = []
     bolum = ""
@@ -103,16 +152,13 @@ def madde_icerigini_getir(link):
 
 
 def gunu_isle(cur, gun):
-    if gazette_id_var_mi(cur, gun) is not None:
-        print(f"{gun}: zaten kayitli, atlaniyor.")
-        return 0
-
     url = gunluk_url_olustur(gun)
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
     except requests.RequestException as e:
         print(f"{gun}: sayfa bulunamadi/cekilemedi, atlaniyor. ({e})")
+        error_log_yaz(cur, gun, None, url, "gun", str(e))
         return 0
 
     response.encoding = response.apparent_encoding
@@ -131,6 +177,7 @@ def gunu_isle(cur, gun):
         whole_issue_pdf_content = pdf_response.content
     except requests.RequestException as e:
         print(f"{gun}: gazete PDF'i cekilemedi ({whole_issue_pdf_url}): {e}")
+        error_log_yaz(cur, gun, None, whole_issue_pdf_url, "gun", str(e))
 
     rows = madde_listesini_cikar(soup, url)
     print(f"{gun}: {len(rows)} link bulundu.")
@@ -163,6 +210,7 @@ def gunu_isle(cur, gun):
             icerik_bytes, content_type = madde_icerigini_getir(row["link"])
         except Exception as e:
             print(f"Icerik cekilemedi veya islenemedi ({row['link']}): {e}")
+            error_log_yaz(cur, gun, gazette_id, row["link"], "madde", str(e))
             continue
 
         cur.execute(
@@ -183,6 +231,7 @@ def gunu_isle(cur, gun):
     return eklenen
 
 
+# ========== JOB: ANA DONGU ==========
 conn = psycopg2.connect(
     host="localhost",
     port=5432,
@@ -192,22 +241,30 @@ conn = psycopg2.connect(
 )
 try:
     cur = conn.cursor()
+    error_log_tablosunu_olustur(cur)
+    conn.commit()
 
-    toplam_gun = 0
-    toplam_madde = 0
-    gun = BASLANGIC_TARIHI
-    while gun <= BITIS_TARIHI:
-        try:
-            eklenen = gunu_isle(cur, gun)
-            conn.commit()
-            if eklenen:
-                toplam_gun += 1
-                toplam_madde += eklenen
-        except Exception as e:
-            conn.rollback()
-            print(f"{gun}: gun islenirken hata olustu, atlaniyor. ({e})")
-        gun += timedelta(days=1)
+    print(f"Job baslatildi: {BASLANGIC_TARIHI} - {BITIS_TARIHI} araligi taranacak.")
+    while True:
+        bekleyenler = bekleyen_gunleri_getir(cur, BASLANGIC_TARIHI, BITIS_TARIHI, BATCH_BOYUTU)
 
-    print(f"Bitti: {toplam_gun} gun, {toplam_madde} madde veritabanina yazildi.")
+        if not bekleyenler:
+            print(f"Islenecek gun kalmadi. {BOS_KUYRUK_BEKLEME_SN} saniye sonra tekrar kontrol edilecek.")
+            time.sleep(BOS_KUYRUK_BEKLEME_SN)
+            continue
+
+        print(f"Yeni batch: {len(bekleyenler)} gun islenecek ({bekleyenler[0]} - {bekleyenler[-1]}).")
+        for gun in bekleyenler:
+            try:
+                gunu_isle(cur, gun)
+                conn.commit()
+            except Exception as e:
+                conn.rollback()
+                error_log_yaz(cur, gun, None, None, "gun", str(e))
+                conn.commit()
+                print(f"{gun}: gun islenirken beklenmeyen hata, error_log'a yazildi. ({e})")
+
+        print(f"Batch bitti. {BATCH_ARASI_BEKLEME_SN} saniye bekleniyor.")
+        time.sleep(BATCH_ARASI_BEKLEME_SN)
 finally:
     conn.close()
