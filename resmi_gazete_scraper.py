@@ -22,7 +22,7 @@ TESSERACT_CONFIG = f"--tessdata-dir {TESSDATA_DIR}"
 # Test icin 1 haftalik araligi kullaniyoruz. Tam yila gecmek icin:
 # BASLANGIC_TARIHI = date(2025, bugun.month, bugun.day)
 # BITIS_TARIHI = date.today()
-BASLANGIC_TARIHI = date(2026, 6, 1)
+BASLANGIC_TARIHI = date(2025, 6, 7)
 BITIS_TARIHI = date(2026, 6, 7)
 
 # ========== JOB: AYARLAR ==========
@@ -156,6 +156,13 @@ def gunu_isle(cur, gun):
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
+    except requests.exceptions.ConnectionError as e:
+        # Gecici bir baglanti/DNS sorunu olabilir (ornegin internetin anlik kesilmesi).
+        # "gun" seviyesinde loglamiyoruz ki bekleyen_gunleri_getir bu gunu kuyruktan
+        # dusurmesin - bir sonraki batch'te tekrar denensin.
+        print(f"{gun}: baglanti hatasi, sonraki calistirmada tekrar denenecek. ({e})")
+        error_log_yaz(cur, gun, None, url, "baglanti", str(e))
+        return 0
     except requests.RequestException as e:
         print(f"{gun}: sayfa bulunamadi/cekilemedi, atlaniyor. ({e})")
         error_log_yaz(cur, gun, None, url, "gun", str(e))
