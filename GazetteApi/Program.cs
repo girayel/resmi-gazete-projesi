@@ -4,11 +4,8 @@ using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-// React (Vite) gelistirme sunucusunun bu API'ye istek atabilmesi icin CORS izni.
 const string ReactDevPolicy = "ReactDevPolicy";
 builder.Services.AddCors(options =>
 {
@@ -25,7 +22,6 @@ var connectionString = builder.Configuration.GetConnectionString("GazetteDb")
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -34,7 +30,6 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors(ReactDevPolicy);
 
-// Tum gunlerin listesi.
 app.MapGet("/api/gazette-issues", async () =>
 {
     var sonuclar = new List<GazetteIssue>();
@@ -61,7 +56,6 @@ app.MapGet("/api/gazette-issues", async () =>
 })
 .WithName("GetGazetteIssues");
 
-// Bir gune ait tum maddeler (4 tablonun birlesimi).
 app.MapGet("/api/gazette-issues/{tarih}", async (string tarih) =>
 {
     if (!DateOnly.TryParse(tarih, out var gun))
@@ -90,9 +84,6 @@ app.MapGet("/api/gazette-issues/{tarih}", async (string tarih) =>
 
     var maddeler = new List<Madde>();
 
-    // Python tarafindaki TABLO_ESLESME ile ayni 4 tablo. Tablo adlari sabit
-    // ve koddan geliyor (disaridan/kullanicidan gelen bir deger degil), bu
-    // yuzden string interpolation ile SQL'e gomulmesi guvenli.
     var tablolar = new[]
     {
         ("legislative", "legislative_section"),
