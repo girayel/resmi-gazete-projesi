@@ -30,29 +30,62 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors(ReactDevPolicy);
 
-app.MapGet("/api/gazette-issues", async () =>
+app.MapGet("/api/gazette-issues", async (int page = 1, int pageSize = 20, string? search = null) =>
 {
-    var sonuclar = new List<GazetteIssue>();
+    page = Math.Max(1, page);
+    pageSize = Math.Clamp(pageSize, 1, 100);
 
     await using var conn = new NpgsqlConnection(connectionString);
     await conn.OpenAsync();
 
-    await using var cmd = new NpgsqlCommand(
-        "SELECT id, date, issue_number, url, pdf_url FROM gazette_issue ORDER BY date", conn);
-    await using var reader = await cmd.ExecuteReaderAsync();
-    while (await reader.ReadAsync())
+    var aramaVar = !string.IsNullOrWhiteSpace(search);
+    var whereClause = aramaVar
+        ? "WHERE CAST(date AS TEXT) ILIKE @arama OR CAST(issue_number AS TEXT) ILIKE @arama"
+        : "";
+
+    int toplamKayit;
+    await using (var sayimCmd = new NpgsqlCommand($"SELECT COUNT(*) FROM gazette_issue {whereClause}", conn))
     {
-        sonuclar.Add(new GazetteIssue
+        if (aramaVar)
         {
-            Id = reader.GetInt32(0),
-            Date = DateOnly.FromDateTime(reader.GetDateTime(1)),
-            IssueNumber = reader.IsDBNull(2) ? null : reader.GetInt32(2),
-            Url = reader.GetString(3),
-            PdfUrl = reader.IsDBNull(4) ? null : reader.GetString(4),
-        });
+            sayimCmd.Parameters.AddWithValue("arama", $"%{search}%");
+        }
+        toplamKayit = Convert.ToInt32(await sayimCmd.ExecuteScalarAsync());
     }
 
-    return Results.Ok(sonuclar);
+    var sonuclar = new List<GazetteIssue>();
+    await using (var cmd = new NpgsqlCommand(
+        $"SELECT id, date, issue_number, url, pdf_url FROM gazette_issue {whereClause} ORDER BY date OFFSET @offset LIMIT @limit",
+        conn))
+    {
+        if (aramaVar)
+        {
+            cmd.Parameters.AddWithValue("arama", $"%{search}%");
+        }
+        cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize);
+        cmd.Parameters.AddWithValue("limit", pageSize);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            sonuclar.Add(new GazetteIssue
+            {
+                Id = reader.GetInt32(0),
+                Date = DateOnly.FromDateTime(reader.GetDateTime(1)),
+                IssueNumber = reader.IsDBNull(2) ? null : reader.GetInt32(2),
+                Url = reader.GetString(3),
+                PdfUrl = reader.IsDBNull(4) ? null : reader.GetString(4),
+            });
+        }
+    }
+
+    return Results.Ok(new GazetteIssuesPage
+    {
+        Items = sonuclar,
+        TotalCount = toplamKayit,
+        Page = page,
+        PageSize = pageSize,
+    });
 })
 .WithName("GetGazetteIssues");
 

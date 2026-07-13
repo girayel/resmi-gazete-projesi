@@ -1,43 +1,53 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import '../Gazete.css'
 
 const SAYFA_BOYUTU = 20
+// Arama kutusuna yazarken her tuş vuruşunda istek atmamak için bekleme süresi
+const ARAMA_GECIKME_MS = 300
 
 function GunListesi({ apiUrl, onGunSec }) {
   const [gunler, setGunler] = useState([])
+  const [toplamKayit, setToplamKayit] = useState(0)
   const [yukleniyor, setYukleniyor] = useState(true)
   const [arama, setArama] = useState('')
+  const [aramaGecikmeli, setAramaGecikmeli] = useState('')
   const [sayfaNo, setSayfaNo] = useState(0)
 
   useEffect(() => {
-    fetch(`${apiUrl}/api/gazette-issues`)
+    const zamanlayici = setTimeout(() => {
+      setAramaGecikmeli(arama)
+      setSayfaNo(0)
+    }, ARAMA_GECIKME_MS)
+    return () => clearTimeout(zamanlayici)
+  }, [arama])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    setYukleniyor(true)
+
+    const parametreler = new URLSearchParams({
+      page: String(sayfaNo + 1),
+      pageSize: String(SAYFA_BOYUTU),
+    })
+    if (aramaGecikmeli.trim()) {
+      parametreler.set('search', aramaGecikmeli.trim())
+    }
+
+    fetch(`${apiUrl}/api/gazette-issues?${parametreler}`, { signal: controller.signal })
       .then((cevap) => cevap.json())
       .then((veri) => {
-        setGunler(veri)
+        setGunler(veri.items)
+        setToplamKayit(veri.totalCount)
         setYukleniyor(false)
       })
-  }, [apiUrl])
+      .catch((hata) => {
+        if (hata.name !== 'AbortError') throw hata
+      })
 
-  const filtrelenmis = useMemo(() => {
-    const aramaKucuk = arama.trim().toLowerCase()
-    if (!aramaKucuk) return gunler
-    return gunler.filter(
-      (gun) =>
-        gun.date.includes(aramaKucuk) ||
-        String(gun.issueNumber ?? '').includes(aramaKucuk)
-    )
-  }, [gunler, arama])
+    return () => controller.abort()
+  }, [apiUrl, sayfaNo, aramaGecikmeli])
 
-  const toplamSayfa = Math.max(1, Math.ceil(filtrelenmis.length / SAYFA_BOYUTU))
-  const gecerliSayfaNo = Math.min(sayfaNo, toplamSayfa - 1)
-  const gosterilenler = filtrelenmis.slice(
-    gecerliSayfaNo * SAYFA_BOYUTU,
-    gecerliSayfaNo * SAYFA_BOYUTU + SAYFA_BOYUTU
-  )
-
-  if (yukleniyor) {
-    return <p className="sayfa">Yükleniyor...</p>
-  }
+  const toplamSayfa = Math.max(1, Math.ceil(toplamKayit / SAYFA_BOYUTU))
 
   return (
     <div className="sayfa">
@@ -48,17 +58,16 @@ function GunListesi({ apiUrl, onGunSec }) {
         type="text"
         placeholder="Tarih (2026-06-03) veya sayı numarasına göre ara..."
         value={arama}
-        onChange={(olay) => {
-          setArama(olay.target.value)
-          setSayfaNo(0)
-        }}
+        onChange={(olay) => setArama(olay.target.value)}
       />
 
-      {gosterilenler.length === 0 ? (
+      {yukleniyor ? (
+        <p className="sayfa">Yükleniyor...</p>
+      ) : gunler.length === 0 ? (
         <p className="bos-durum">Aramaya uyan gün bulunamadı.</p>
       ) : (
         <ul className="gazete-liste">
-          {gosterilenler.map((gun) => (
+          {gunler.map((gun) => (
             <li key={gun.id}>
               <button onClick={() => onGunSec(gun.date)}>
                 {gun.date} {gun.issueNumber ? `— Sayı ${gun.issueNumber}` : ''}
@@ -71,17 +80,17 @@ function GunListesi({ apiUrl, onGunSec }) {
       {toplamSayfa > 1 && (
         <div className="sayfalama">
           <button
-            disabled={gecerliSayfaNo === 0}
-            onClick={() => setSayfaNo(gecerliSayfaNo - 1)}
+            disabled={sayfaNo === 0}
+            onClick={() => setSayfaNo(sayfaNo - 1)}
           >
             &larr; Önceki
           </button>
           <span>
-            Sayfa {gecerliSayfaNo + 1} / {toplamSayfa}
+            Sayfa {sayfaNo + 1} / {toplamSayfa}
           </span>
           <button
-            disabled={gecerliSayfaNo >= toplamSayfa - 1}
-            onClick={() => setSayfaNo(gecerliSayfaNo + 1)}
+            disabled={sayfaNo >= toplamSayfa - 1}
+            onClick={() => setSayfaNo(sayfaNo + 1)}
           >
             Sonraki &rarr;
           </button>
