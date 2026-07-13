@@ -3,3 +3,5 @@ resmi_gazete_test.csv
 __pycache__/
 tessdata/
 .venv/
+GazetteApi/obj/
+GazetteApi/bin/

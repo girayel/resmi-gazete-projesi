@@ -1,0 +1,6 @@
+@GazetteApi_HostAddress = http://localhost:5222
+
+GET {{GazetteApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

@@ -1,0 +1,109 @@
+.sayfa {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  text-align: left;
+}
+
+.geri-buton {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 4px 0;
+  margin-bottom: 12px;
+}
+
+.geri-buton:hover {
+  text-decoration: underline;
+}
+
+.arama-kutusu {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font: inherit;
+  color: var(--text-h);
+  background: var(--code-bg);
+}
+
+.gazete-liste {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gazete-liste li button {
+  width: 100%;
+  text-align: left;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.gazete-liste li button:hover {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.bolum-etiket {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-right: 8px;
+}
+
+.sayfalama {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.sayfalama button {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--code-bg);
+  color: var(--text-h);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sayfalama button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.madde-icerik {
+  white-space: pre-wrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--code-bg);
+  line-height: 150%;
+  font-size: 16px;
+}
+
+.bos-durum {
+  color: var(--text);
+  font-style: italic;
+}
