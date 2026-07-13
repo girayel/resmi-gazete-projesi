@@ -5,6 +5,13 @@
   text-align: left;
 }
 
+.sayfa h1 {
+  font-size: 28px;
+  line-height: 1.3;
+  letter-spacing: normal;
+  margin: 8px 0 16px;
+}
+
 .geri-buton {
   background: none;
   border: none;
