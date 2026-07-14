@@ -6,6 +6,8 @@ import psycopg2
 from datetime import date, timedelta
 import time
 import os
+import smtplib
+from email.message import EmailMessage
 from dotenv import load_dotenv
 import fitz
 import pytesseract
@@ -14,6 +16,15 @@ import io
 
 load_dotenv()
 db_password = os.getenv("DB_PASSWORD")
+
+# SMTP ayari yoksa (SMTP_HOST bos) bildirimler gercekten gonderilmez, sadece
+# konsola [SIMULASYON] olarak yazilir - eslesme/tekrar-gondermeme mantigini
+# gercek bir e-posta sunucusu olmadan da test edebilmek icin.
+SMTP_HOST = os.getenv("SMTP_HOST")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER)
 
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 TESSDATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tessdata")
@@ -118,6 +129,111 @@ def bekleyen_gunleri_getir(cur, baslangic, bitis, adet):
     return bekleyenler
 
 
+# ========== JOB: KEYWORD ESLESTIRME ==========
+def takip_edilen_kelimeleri_getir(cur):
+    """Havuzdaki her keyword'u, onu takip eden kullanicilarla birlikte dondurur.
+    {keyword: [(user_id, email), ...]} seklinde. Batch basina bir kez cagrilir;
+    her madde icin ayri sorgu atmamak icin sonuc bellekte tutulur."""
+    cur.execute(
+        "SELECT k.keyword, u.id, u.email "
+        "FROM user_keywords uk "
+        "JOIN keywords k ON k.id = uk.keyword_id "
+        "JOIN users u ON u.id = uk.user_id"
+    )
+    takip = {}
+    for keyword, user_id, email in cur.fetchall():
+        takip.setdefault(keyword, []).append((user_id, email))
+    return takip
+
+
+def metinde_eslesen_kelimeleri_bul(metin, takip_edilen_kelimeler):
+    """Verilen metin icinde (buyuk/kucuk harf duyarsiz) hangi takip edilen
+    keyword'lerin gectigini bulur. {keyword: [(user_id, email), ...]} dondurur -
+    sadece metinde gecen keyword'ler sonuca girer."""
+    metin_kucuk = metin.casefold()
+    eslesmeler = {}
+    for keyword, takipciler in takip_edilen_kelimeler.items():
+        if keyword.casefold() in metin_kucuk:
+            eslesmeler[keyword] = takipciler
+    return eslesmeler
+
+
+# ========== JOB: BILDIRIM ==========
+def notification_log_tablosunu_olustur(cur):
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS notification_log (
+            id serial PRIMARY KEY,
+            user_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            madde_tablosu varchar(50) NOT NULL,
+            madde_id integer NOT NULL,
+            eslesen_kelimeler text NOT NULL,
+            gonderim_zamani timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (user_id, madde_tablosu, madde_id)
+        )
+        """
+    )
+
+
+def bildirim_kayit_olustur(cur, user_id, madde_tablosu, madde_id, kelimeler):
+    """notification_log'a kayit eklemeyi dener. Bu kullanici+madde icin daha once
+    kayit varsa (UNIQUE kisitlamasi) hicbir sey yapmaz. Yeni bir kayit olusturulduysa
+    True, zaten varsa (tekrar bildirim gonderilmemeli) False dondurur."""
+    cur.execute(
+        "INSERT INTO notification_log (user_id, madde_tablosu, madde_id, eslesen_kelimeler) "
+        "VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (user_id, madde_tablosu, madde_id) DO NOTHING "
+        "RETURNING id",
+        (user_id, madde_tablosu, madde_id, ", ".join(sorted(kelimeler))),
+    )
+    return cur.fetchone() is not None
+
+
+def bildirim_epostasi_gonder(hedef_email, konu, govde):
+    if not SMTP_HOST:
+        print(f"  [SIMULASYON] SMTP yapilandirilmamis, gercek eposta gonderilmedi -> {hedef_email}: {konu}")
+        return
+
+    try:
+        mesaj = EmailMessage()
+        mesaj["Subject"] = konu
+        mesaj["From"] = SMTP_FROM
+        mesaj["To"] = hedef_email
+        mesaj.set_content(govde)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as sunucu:
+            sunucu.starttls()
+            sunucu.login(SMTP_USER, SMTP_PASSWORD)
+            sunucu.send_message(mesaj)
+        print(f"  [EPOSTA] Gonderildi -> {hedef_email}: {konu}")
+    except Exception as e:
+        print(f"  [EPOSTA HATASI] {hedef_email}: {e}")
+
+
+def madde_eslesmelerini_bildir(cur, eslesmeler, madde_tablosu, madde_id, baslik, link):
+    """eslesmeler: {keyword: [(user_id, email), ...]}. Ayni kullaniciyi birden
+    fazla keyword'de bulursak, ona TEK bir e-posta gonderiyoruz (her keyword icin
+    ayri ayri degil) - kullanici ayni madde icin spam almasin diye."""
+    kullanici_bazinda = {}
+    for keyword, takipciler in eslesmeler.items():
+        for user_id, email in takipciler:
+            kullanici_bazinda.setdefault(user_id, {"email": email, "kelimeler": []})
+            kullanici_bazinda[user_id]["kelimeler"].append(keyword)
+
+    for user_id, bilgi in kullanici_bazinda.items():
+        yeni_mi = bildirim_kayit_olustur(cur, user_id, madde_tablosu, madde_id, bilgi["kelimeler"])
+        if not yeni_mi:
+            print(f"  [ATLANDI] {bilgi['email']} bu madde icin daha once bildirilmisti.")
+            continue
+
+        konu = f"Resmi Gazete Bildirimi: {', '.join(bilgi['kelimeler'])}"
+        govde = (
+            "Takip ettiginiz kelime(ler) ile eslesen yeni bir Resmi Gazete maddesi yayimlandi:\n\n"
+            f"{baslik}\n{link}\n\nEslesen kelimeler: {', '.join(bilgi['kelimeler'])}"
+        )
+        bildirim_epostasi_gonder(bilgi["email"], konu, govde)
+
+
 def madde_listesini_cikar(soup, url):
     rows = []
     bolum = ""
@@ -151,7 +267,7 @@ def madde_icerigini_getir(link):
     return metin.encode("utf-8"), content_type
 
 
-def gunu_isle(cur, gun):
+def gunu_isle(cur, gun, takip_edilen_kelimeler):
     url = gunluk_url_olustur(gun)
     try:
         response = requests.get(url, headers=headers, timeout=15)
@@ -222,7 +338,7 @@ def gunu_isle(cur, gun):
 
         cur.execute(
             f"INSERT INTO {tablo} (gazette_id, title, link, pdf_content, content_type) "
-            f"VALUES (%s, %s, %s, %s, %s)",
+            f"VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (
                 gazette_id,
                 temizle_null_bayt(row["title"]),
@@ -231,7 +347,14 @@ def gunu_isle(cur, gun):
                 content_type,
             ),
         )
+        madde_id = cur.fetchone()[0]
         eklenen += 1
+
+        icerik_metni = icerik_bytes.decode("utf-8", errors="ignore") if icerik_bytes else ""
+        eslesmeler = metinde_eslesen_kelimeleri_bul(row["title"] + " " + icerik_metni, takip_edilen_kelimeler)
+        if eslesmeler:
+            madde_eslesmelerini_bildir(cur, eslesmeler, tablo, madde_id, row["title"], row["link"])
+
         time.sleep(0.2)
 
     print(f"{gun}: {eklenen} satir veritabanina yazildi.")
@@ -249,6 +372,7 @@ conn = psycopg2.connect(
 try:
     cur = conn.cursor()
     error_log_tablosunu_olustur(cur)
+    notification_log_tablosunu_olustur(cur)
     conn.commit()
 
     print(f"Job baslatildi: {BASLANGIC_TARIHI} - {BITIS_TARIHI} araligi taranacak.")
@@ -260,10 +384,12 @@ try:
             time.sleep(BOS_KUYRUK_BEKLEME_SN)
             continue
 
-        print(f"Yeni batch: {len(bekleyenler)} gun islenecek ({bekleyenler[0]} - {bekleyenler[-1]}).")
+        takip_edilen_kelimeler = takip_edilen_kelimeleri_getir(cur)
+        print(f"Yeni batch: {len(bekleyenler)} gun islenecek ({bekleyenler[0]} - {bekleyenler[-1]}), "
+              f"{len(takip_edilen_kelimeler)} kelime takip ediliyor.")
         for gun in bekleyenler:
             try:
-                gunu_isle(cur, gun)
+                gunu_isle(cur, gun, takip_edilen_kelimeler)
                 conn.commit()
             except Exception as e:
                 conn.rollback()

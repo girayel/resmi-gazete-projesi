@@ -1,6 +1,12 @@
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using GazetteApi.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Npgsql;
+
+JwtSecurityTokenHandler.DefaultMapInboundClaims = false;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +26,28 @@ builder.Services.AddCors(options =>
 var connectionString = builder.Configuration.GetConnectionString("GazetteDb")
     ?? throw new InvalidOperationException("ConnectionStrings:GazetteDb ayarlanmamis (dotnet user-secrets set ile eklenmeli).");
 
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("Jwt:Key ayarlanmamis (dotnet user-secrets set ile eklenmeli).");
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "GazetteApi";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "GazetteApiUsers";
+var jwtExpireMinutes = builder.Configuration.GetValue<int?>("Jwt:ExpireMinutes") ?? 120;
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ValidateLifetime = true,
+        };
+    });
+builder.Services.AddAuthorization();
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -29,6 +57,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors(ReactDevPolicy);
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapGet("/api/gazette-issues", async (int page = 1, int pageSize = 20, string? search = null) =>
 {
@@ -159,4 +189,376 @@ app.MapGet("/api/gazette-issues/{tarih}", async (string tarih) =>
 })
 .WithName("GetMaddelerByTarih");
 
+app.MapPost("/api/auth/register", async (RegisterRequest istek) =>
+{
+    if (string.IsNullOrWhiteSpace(istek.Email) || string.IsNullOrWhiteSpace(istek.Password))
+    {
+        return Results.BadRequest(new { hata = "Email ve sifre zorunludur." });
+    }
+    if (istek.Password.Length < 6)
+    {
+        return Results.BadRequest(new { hata = "Sifre en az 6 karakter olmalidir." });
+    }
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    await using (var kontrolCmd = new NpgsqlCommand("SELECT 1 FROM users WHERE email = @email", conn))
+    {
+        kontrolCmd.Parameters.AddWithValue("email", istek.Email);
+        if (await kontrolCmd.ExecuteScalarAsync() is not null)
+        {
+            return Results.Conflict(new { hata = "Bu email ile kayitli bir kullanici zaten var." });
+        }
+    }
+
+    var sifreHash = BCrypt.Net.BCrypt.HashPassword(istek.Password);
+
+    int userId;
+    await using (var cmd = new NpgsqlCommand(
+        "INSERT INTO users (email, password_hash, role) VALUES (@email, @hash, 'user') RETURNING id",
+        conn))
+    {
+        cmd.Parameters.AddWithValue("email", istek.Email);
+        cmd.Parameters.AddWithValue("hash", sifreHash);
+        userId = (int)(await cmd.ExecuteScalarAsync())!;
+    }
+
+    var token = JwtTokenUret(userId, istek.Email, "user");
+    return Results.Created($"/api/auth/register/{userId}", new AuthResponse(token, userId, istek.Email, "user"));
+})
+.WithName("Register");
+
+app.MapPost("/api/auth/login", async (LoginRequest istek) =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    int userId;
+    string sifreHash;
+    string rol;
+    await using (var cmd = new NpgsqlCommand(
+        "SELECT id, password_hash, role FROM users WHERE email = @email", conn))
+    {
+        cmd.Parameters.AddWithValue("email", istek.Email);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return Results.Unauthorized();
+        }
+        userId = reader.GetInt32(0);
+        sifreHash = reader.GetString(1);
+        rol = reader.GetString(2);
+    }
+
+    if (!BCrypt.Net.BCrypt.Verify(istek.Password, sifreHash))
+    {
+        return Results.Unauthorized();
+    }
+
+    var token = JwtTokenUret(userId, istek.Email, rol);
+    return Results.Ok(new AuthResponse(token, userId, istek.Email, rol));
+})
+.WithName("Login");
+
+app.MapGet("/api/auth/me", (ClaimsPrincipal kullanici) =>
+{
+    var id = kullanici.FindFirstValue(JwtRegisteredClaimNames.Sub);
+    var email = kullanici.FindFirstValue(JwtRegisteredClaimNames.Email);
+    var rol = kullanici.FindFirstValue(ClaimTypes.Role);
+    return Results.Ok(new { id, email, rol });
+})
+.RequireAuthorization()
+.WithName("Me");
+
+app.MapGet("/api/admin/users", async () =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    var kullanicilar = new List<UserSummary>();
+    await using var cmd = new NpgsqlCommand(
+        "SELECT id, email, role, created_at FROM users ORDER BY id", conn);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        kullanicilar.Add(new UserSummary(
+            reader.GetInt32(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.GetFieldValue<DateTimeOffset>(3)));
+    }
+
+    return Results.Ok(kullanicilar);
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminGetUsers");
+
+app.MapGet("/api/keywords", async () =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    var kelimeler = new List<KeywordSummary>();
+    await using var cmd = new NpgsqlCommand(
+        "SELECT id, keyword, created_at FROM keywords ORDER BY keyword", conn);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        kelimeler.Add(new KeywordSummary(
+            reader.GetInt32(0),
+            reader.GetString(1),
+            reader.GetFieldValue<DateTimeOffset>(2)));
+    }
+
+    return Results.Ok(kelimeler);
+})
+.RequireAuthorization()
+.WithName("GetKeywords");
+
+app.MapPost("/api/keywords", async (CreateKeywordRequest istek) =>
+{
+    var kelime = istek.Keyword?.Trim() ?? "";
+    if (string.IsNullOrWhiteSpace(kelime))
+    {
+        return Results.BadRequest(new { hata = "Keyword bos olamaz." });
+    }
+    if (kelime.Length > 100)
+    {
+        return Results.BadRequest(new { hata = "Keyword en fazla 100 karakter olabilir." });
+    }
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    await using (var kontrolCmd = new NpgsqlCommand("SELECT 1 FROM keywords WHERE keyword = @kelime", conn))
+    {
+        kontrolCmd.Parameters.AddWithValue("kelime", kelime);
+        if (await kontrolCmd.ExecuteScalarAsync() is not null)
+        {
+            return Results.Conflict(new { hata = "Bu keyword zaten havuzda var." });
+        }
+    }
+
+    int id;
+    DateTimeOffset olusturulmaZamani;
+    await using (var cmd = new NpgsqlCommand(
+        "INSERT INTO keywords (keyword) VALUES (@kelime) RETURNING id, created_at", conn))
+    {
+        cmd.Parameters.AddWithValue("kelime", kelime);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        id = reader.GetInt32(0);
+        olusturulmaZamani = reader.GetFieldValue<DateTimeOffset>(1);
+    }
+
+    return Results.Created($"/api/keywords/{id}", new KeywordSummary(id, kelime, olusturulmaZamani));
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("CreateKeyword");
+
+app.MapDelete("/api/keywords/{id:int}", async (int id) =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("DELETE FROM keywords WHERE id = @id", conn);
+    cmd.Parameters.AddWithValue("id", id);
+    var silinenSatir = await cmd.ExecuteNonQueryAsync();
+
+    return silinenSatir == 0 ? Results.NotFound(new { hata = "Bu id ile bir keyword bulunamadi." }) : Results.NoContent();
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("DeleteKeyword");
+
+app.MapGet("/api/me/keywords", async (ClaimsPrincipal kullanici) =>
+{
+    var userId = int.Parse(kullanici.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+    return Results.Ok(await KullaniciKeywordleriniGetir(conn, userId));
+})
+.RequireAuthorization()
+.WithName("GetMyKeywords");
+
+app.MapPost("/api/me/keywords", async (ClaimsPrincipal kullanici, SelectKeywordRequest istek) =>
+{
+    var userId = int.Parse(kullanici.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    var hata = await KeywordAtamaGecerliMi(conn, userId, istek.KeywordId);
+    if (hata is not null)
+    {
+        return hata;
+    }
+
+    await KeywordAta(conn, userId, istek.KeywordId, addedByUserId: null);
+    return Results.Created($"/api/me/keywords/{istek.KeywordId}", new { keywordId = istek.KeywordId });
+})
+.RequireAuthorization()
+.WithName("AddMyKeyword");
+
+app.MapDelete("/api/me/keywords/{keywordId:int}", async (ClaimsPrincipal kullanici, int keywordId) =>
+{
+    var userId = int.Parse(kullanici.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand(
+        "DELETE FROM user_keywords WHERE user_id = @userId AND keyword_id = @keywordId", conn);
+    cmd.Parameters.AddWithValue("userId", userId);
+    cmd.Parameters.AddWithValue("keywordId", keywordId);
+    var silinenSatir = await cmd.ExecuteNonQueryAsync();
+
+    return silinenSatir == 0 ? Results.NotFound(new { hata = "Bu keyword senin secimlerinde yok." }) : Results.NoContent();
+})
+.RequireAuthorization()
+.WithName("RemoveMyKeyword");
+
+app.MapGet("/api/admin/users/{userId:int}/keywords", async (int userId) =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    if (!await KullaniciVarMi(conn, userId))
+    {
+        return Results.NotFound(new { hata = "Bu id ile bir kullanici bulunamadi." });
+    }
+
+    return Results.Ok(await KullaniciKeywordleriniGetir(conn, userId));
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminGetUserKeywords");
+
+app.MapPost("/api/admin/users/{userId:int}/keywords", async (ClaimsPrincipal admin, int userId, SelectKeywordRequest istek) =>
+{
+    var adminId = int.Parse(admin.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    if (!await KullaniciVarMi(conn, userId))
+    {
+        return Results.NotFound(new { hata = "Bu id ile bir kullanici bulunamadi." });
+    }
+
+    var hata = await KeywordAtamaGecerliMi(conn, userId, istek.KeywordId);
+    if (hata is not null)
+    {
+        return hata;
+    }
+
+    await KeywordAta(conn, userId, istek.KeywordId, adminId);
+    return Results.Created($"/api/admin/users/{userId}/keywords/{istek.KeywordId}", new { userId, keywordId = istek.KeywordId });
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminAddUserKeyword");
+
+app.MapDelete("/api/admin/users/{userId:int}/keywords/{keywordId:int}", async (int userId, int keywordId) =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand(
+        "DELETE FROM user_keywords WHERE user_id = @userId AND keyword_id = @keywordId", conn);
+    cmd.Parameters.AddWithValue("userId", userId);
+    cmd.Parameters.AddWithValue("keywordId", keywordId);
+    var silinenSatir = await cmd.ExecuteNonQueryAsync();
+
+    return silinenSatir == 0 ? Results.NotFound(new { hata = "Bu kullanicida bu keyword secili degil." }) : Results.NoContent();
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminRemoveUserKeyword");
+
 app.Run();
+
+async Task<bool> KullaniciVarMi(NpgsqlConnection conn, int userId)
+{
+    await using var cmd = new NpgsqlCommand("SELECT 1 FROM users WHERE id = @userId", conn);
+    cmd.Parameters.AddWithValue("userId", userId);
+    return await cmd.ExecuteScalarAsync() is not null;
+}
+
+async Task<List<UserKeywordSummary>> KullaniciKeywordleriniGetir(NpgsqlConnection conn, int userId)
+{
+    var kelimeler = new List<UserKeywordSummary>();
+    await using var cmd = new NpgsqlCommand(
+        "SELECT k.id, k.keyword, uk.created_at " +
+        "FROM user_keywords uk JOIN keywords k ON k.id = uk.keyword_id " +
+        "WHERE uk.user_id = @userId ORDER BY k.keyword",
+        conn);
+    cmd.Parameters.AddWithValue("userId", userId);
+
+    await using var reader = await cmd.ExecuteReaderAsync();
+    while (await reader.ReadAsync())
+    {
+        kelimeler.Add(new UserKeywordSummary(
+            reader.GetInt32(0),
+            reader.GetString(1),
+            reader.GetFieldValue<DateTimeOffset>(2)));
+    }
+    return kelimeler;
+}
+
+async Task<IResult?> KeywordAtamaGecerliMi(NpgsqlConnection conn, int userId, int keywordId)
+{
+    await using (var keywordKontrolCmd = new NpgsqlCommand("SELECT 1 FROM keywords WHERE id = @keywordId", conn))
+    {
+        keywordKontrolCmd.Parameters.AddWithValue("keywordId", keywordId);
+        if (await keywordKontrolCmd.ExecuteScalarAsync() is null)
+        {
+            return Results.NotFound(new { hata = "Bu id ile bir keyword bulunamadi." });
+        }
+    }
+
+    await using (var secimKontrolCmd = new NpgsqlCommand(
+        "SELECT 1 FROM user_keywords WHERE user_id = @userId AND keyword_id = @keywordId", conn))
+    {
+        secimKontrolCmd.Parameters.AddWithValue("userId", userId);
+        secimKontrolCmd.Parameters.AddWithValue("keywordId", keywordId);
+        if (await secimKontrolCmd.ExecuteScalarAsync() is not null)
+        {
+            return Results.Conflict(new { hata = "Bu keyword zaten secilmis." });
+        }
+    }
+
+    return null;
+}
+
+async Task KeywordAta(NpgsqlConnection conn, int userId, int keywordId, int? addedByUserId)
+{
+    await using var cmd = new NpgsqlCommand(
+        "INSERT INTO user_keywords (user_id, keyword_id, added_by_user_id) VALUES (@userId, @keywordId, @addedByUserId)",
+        conn);
+    cmd.Parameters.AddWithValue("userId", userId);
+    cmd.Parameters.AddWithValue("keywordId", keywordId);
+    cmd.Parameters.AddWithValue("addedByUserId", (object?)addedByUserId ?? DBNull.Value);
+    await cmd.ExecuteNonQueryAsync();
+}
+
+string JwtTokenUret(int userId, string email, string role)
+{
+    var claims = new[]
+    {
+        new Claim(JwtRegisteredClaimNames.Sub, userId.ToString()),
+        new Claim(JwtRegisteredClaimNames.Email, email),
+        new Claim(ClaimTypes.Role, role),
+    };
+
+    var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
+    var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+    var token = new JwtSecurityToken(
+        issuer: jwtIssuer,
+        audience: jwtAudience,
+        claims: claims,
+        expires: DateTime.UtcNow.AddMinutes(jwtExpireMinutes),
+        signingCredentials: creds);
+
+    return new JwtSecurityTokenHandler().WriteToken(token);
+}
