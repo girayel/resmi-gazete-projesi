@@ -9,6 +9,7 @@ function GunListesi({ apiUrl, onGunSec }) {
   const [gunler, setGunler] = useState([])
   const [toplamKayit, setToplamKayit] = useState(0)
   const [yukleniyor, setYukleniyor] = useState(true)
+  const [hata, setHata] = useState('')
   const [arama, setArama] = useState('')
   const [aramaGecikmeli, setAramaGecikmeli] = useState('')
   const [sayfaNo, setSayfaNo] = useState(0)
@@ -24,6 +25,7 @@ function GunListesi({ apiUrl, onGunSec }) {
   useEffect(() => {
     const controller = new AbortController()
     setYukleniyor(true)
+    setHata('')
 
     const parametreler = new URLSearchParams({
       page: String(sayfaNo + 1),
@@ -40,8 +42,11 @@ function GunListesi({ apiUrl, onGunSec }) {
         setToplamKayit(veri.totalCount)
         setYukleniyor(false)
       })
-      .catch((hata) => {
-        if (hata.name !== 'AbortError') throw hata
+      .catch((hataNesnesi) => {
+        if (hataNesnesi.name !== 'AbortError') {
+          setHata('Sunucuya bağlanılamadı. API çalışıyor mu?')
+          setYukleniyor(false)
+        }
       })
 
     return () => controller.abort()
@@ -63,6 +68,8 @@ function GunListesi({ apiUrl, onGunSec }) {
 
       {yukleniyor ? (
         <p className="sayfa">Yükleniyor...</p>
+      ) : hata ? (
+        <p className="auth-hata">{hata}</p>
       ) : gunler.length === 0 ? (
         <p className="bos-durum">Aramaya uyan gün bulunamadı.</p>
       ) : (
