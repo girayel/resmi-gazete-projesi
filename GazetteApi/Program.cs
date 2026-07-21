@@ -1,4 +1,7 @@
+using System.Net;
+using System.Net.Mail;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
 using GazetteApi.Models;
@@ -31,6 +34,13 @@ var jwtKey = builder.Configuration["Jwt:Key"]
 var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "GazetteApi";
 var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "GazetteApiUsers";
 var jwtExpireMinutes = builder.Configuration.GetValue<int?>("Jwt:ExpireMinutes") ?? 120;
+
+var smtpHost = builder.Configuration["Smtp:Host"];
+var smtpPort = builder.Configuration.GetValue<int?>("Smtp:Port") ?? 587;
+var smtpUser = builder.Configuration["Smtp:User"];
+var smtpPassword = builder.Configuration["Smtp:Password"];
+var smtpFrom = builder.Configuration["Smtp:From"] ?? smtpUser;
+var frontendUrl = builder.Configuration["Frontend:Url"] ?? "http://localhost:5173";
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -260,6 +270,92 @@ app.MapPost("/api/auth/login", async (LoginRequest istek) =>
     return Results.Ok(new AuthResponse(token, userId, istek.Email, rol));
 })
 .WithName("Login");
+
+app.MapPost("/api/auth/forgot-password", async (ForgotPasswordRequest istek) =>
+{
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    int? userId = null;
+    await using (var cmd = new NpgsqlCommand("SELECT id FROM users WHERE email = @email", conn))
+    {
+        cmd.Parameters.AddWithValue("email", istek.Email);
+        if (await cmd.ExecuteScalarAsync() is int id)
+        {
+            userId = id;
+        }
+    }
+
+    // Kullanici bulunamasa bile ayni genel mesaji donuyoruz - "bu email kayitli mi
+    // degil mi" bilgisini disariya sizdirmemek icin (email enumeration'i onlemek).
+    if (userId is not null)
+    {
+        var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
+            .Replace('+', '-').Replace('/', '_').TrimEnd('=');
+        var sonKullanma = DateTimeOffset.UtcNow.AddHours(1);
+
+        await using (var insertCmd = new NpgsqlCommand(
+            "INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (@userId, @token, @expiresAt)",
+            conn))
+        {
+            insertCmd.Parameters.AddWithValue("userId", userId.Value);
+            insertCmd.Parameters.AddWithValue("token", token);
+            insertCmd.Parameters.AddWithValue("expiresAt", sonKullanma);
+            await insertCmd.ExecuteNonQueryAsync();
+        }
+
+        var sifirlamaLinki = $"{frontendUrl}/?resetToken={token}";
+        await EpostaGonder(
+            istek.Email,
+            "Resmi Gazete - Sifre Sifirlama",
+            $"Sifreni sifirlamak icin asagidaki linke tikla:\n\n{sifirlamaLinki}\n\nBu link 1 saat gecerlidir. Bu istegi sen yapmadiysan bu maili yoksayabilirsin.");
+    }
+
+    return Results.Ok(new { mesaj = "Bu email kayitliysa, sifre sifirlama baglantisi gonderildi." });
+})
+.WithName("ForgotPassword");
+
+app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest istek) =>
+{
+    if (string.IsNullOrWhiteSpace(istek.NewPassword) || istek.NewPassword.Length < 6)
+    {
+        return Results.BadRequest(new { hata = "Sifre en az 6 karakter olmalidir." });
+    }
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    int userId;
+    await using (var cmd = new NpgsqlCommand(
+        "SELECT user_id FROM password_reset_tokens WHERE token = @token AND used_at IS NULL AND expires_at > now()",
+        conn))
+    {
+        cmd.Parameters.AddWithValue("token", istek.Token);
+        if (await cmd.ExecuteScalarAsync() is not int id)
+        {
+            return Results.BadRequest(new { hata = "Bu baglanti gecersiz ya da suresi dolmus." });
+        }
+        userId = id;
+    }
+
+    var yeniHash = BCrypt.Net.BCrypt.HashPassword(istek.NewPassword);
+    await using (var updateCmd = new NpgsqlCommand("UPDATE users SET password_hash = @hash WHERE id = @userId", conn))
+    {
+        updateCmd.Parameters.AddWithValue("hash", yeniHash);
+        updateCmd.Parameters.AddWithValue("userId", userId);
+        await updateCmd.ExecuteNonQueryAsync();
+    }
+
+    await using (var kullanCmd = new NpgsqlCommand(
+        "UPDATE password_reset_tokens SET used_at = now() WHERE token = @token", conn))
+    {
+        kullanCmd.Parameters.AddWithValue("token", istek.Token);
+        await kullanCmd.ExecuteNonQueryAsync();
+    }
+
+    return Results.Ok(new { mesaj = "Sifreniz basariyla degistirildi." });
+})
+.WithName("ResetPassword");
 
 app.MapGet("/api/auth/me", (ClaimsPrincipal kullanici) =>
 {
@@ -561,4 +657,29 @@ string JwtTokenUret(int userId, string email, string role)
         signingCredentials: creds);
 
     return new JwtSecurityTokenHandler().WriteToken(token);
+}
+
+async Task EpostaGonder(string hedefEmail, string konu, string govde)
+{
+    if (string.IsNullOrEmpty(smtpHost))
+    {
+        Console.WriteLine($"[SIMULASYON] SMTP yapilandirilmamis, gercek eposta gonderilmedi -> {hedefEmail}: {konu}");
+        return;
+    }
+
+    try
+    {
+        using var mesaj = new MailMessage(smtpFrom!, hedefEmail, konu, govde);
+        using var client = new SmtpClient(smtpHost, smtpPort)
+        {
+            Credentials = new NetworkCredential(smtpUser, smtpPassword),
+            EnableSsl = true,
+        };
+        await client.SendMailAsync(mesaj);
+        Console.WriteLine($"[EPOSTA] Gonderildi -> {hedefEmail}: {konu}");
+    }
+    catch (Exception e)
+    {
+        Console.WriteLine($"[EPOSTA HATASI] {hedefEmail}: {e.Message}");
+    }
 }

@@ -5,6 +5,7 @@ import MaddeListesi from './components/MaddeListesi'
 import MaddeDetay from './components/MaddeDetay'
 import KeywordPanel from './components/KeywordPanel'
 import AdminPanel from './components/AdminPanel'
+import ResetPasswordForm from './components/ResetPasswordForm'
 
 const API_URL = 'http://localhost:5222'
 
@@ -17,6 +18,7 @@ function App() {
     return kayitli ? JSON.parse(kayitli) : null
   })
   const [misafir, setMisafir] = useState(false)
+  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('resetToken'))
 
   const girisYap = (veri) => {
     localStorage.setItem('gazette_kullanici', JSON.stringify(veri))
@@ -28,6 +30,19 @@ function App() {
     setKullanici(null)
     setMisafir(false)
     setGorunum('gazete')
+  }
+
+  if (resetToken) {
+    return (
+      <ResetPasswordForm
+        apiUrl={API_URL}
+        token={resetToken}
+        onTamamlandi={() => {
+          window.history.replaceState({}, '', window.location.pathname)
+          setResetToken(null)
+        }}
+      />
+    )
   }
 
   if (!kullanici && !misafir) {

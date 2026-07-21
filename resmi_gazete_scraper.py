@@ -34,7 +34,7 @@ TESSERACT_CONFIG = f"--tessdata-dir {TESSDATA_DIR}"
 # BASLANGIC_TARIHI = date(2025, bugun.month, bugun.day)
 # BITIS_TARIHI = date.today()
 BASLANGIC_TARIHI = date(2025, 6, 7)
-BITIS_TARIHI = date(2026, 6, 7)
+BITIS_TARIHI = date.today()
 
 # ========== JOB: AYARLAR ==========
 BATCH_BOYUTU = 5
@@ -210,10 +210,9 @@ def bildirim_epostasi_gonder(hedef_email, konu, govde):
         print(f"  [EPOSTA HATASI] {hedef_email}: {e}")
 
 
-def madde_eslesmelerini_bildir(cur, eslesmeler, madde_tablosu, madde_id, baslik, link):
-    """eslesmeler: {keyword: [(user_id, email), ...]}. Ayni kullaniciyi birden
-    fazla keyword'de bulursak, ona TEK bir e-posta gonderiyoruz (her keyword icin
-    ayri ayri degil) - kullanici ayni madde icin spam almasin diye."""
+def eslesmeleri_gunluk_ozete_ekle(gunluk_bildirimler, eslesmeler, madde_tablosu, madde_id, baslik, link):
+    """Bir maddenin eslesmelerini hemen mail atmak yerine, gunun sonunda tek ozet
+    olarak gondermek uzere biriktirir."""
     kullanici_bazinda = {}
     for keyword, takipciler in eslesmeler.items():
         for user_id, email in takipciler:
@@ -221,15 +220,37 @@ def madde_eslesmelerini_bildir(cur, eslesmeler, madde_tablosu, madde_id, baslik,
             kullanici_bazinda[user_id]["kelimeler"].append(keyword)
 
     for user_id, bilgi in kullanici_bazinda.items():
-        yeni_mi = bildirim_kayit_olustur(cur, user_id, madde_tablosu, madde_id, bilgi["kelimeler"])
-        if not yeni_mi:
-            print(f"  [ATLANDI] {bilgi['email']} bu madde icin daha once bildirilmisti.")
+        gunluk_bildirimler.setdefault(user_id, {"email": bilgi["email"], "maddeler": []})
+        gunluk_bildirimler[user_id]["maddeler"].append({
+            "tablo": madde_tablosu,
+            "id": madde_id,
+            "baslik": baslik,
+            "link": link,
+            "kelimeler": bilgi["kelimeler"],
+        })
+
+
+def gunluk_ozet_bildirimlerini_gonder(cur, gunluk_bildirimler):
+    """Bir gunluk gazete islendikten sonra cagrilir; her kullaniciya, o gun icin
+    (daha once bildirilmemis) tum eslesen maddeleri TEK bir ozet mailde toplar."""
+    for user_id, bilgi in gunluk_bildirimler.items():
+        yeni_maddeler = []
+        for madde in bilgi["maddeler"]:
+            yeni_mi = bildirim_kayit_olustur(cur, user_id, madde["tablo"], madde["id"], madde["kelimeler"])
+            if yeni_mi:
+                yeni_maddeler.append(madde)
+
+        if not yeni_maddeler:
             continue
 
-        konu = f"Resmi Gazete Bildirimi: {', '.join(bilgi['kelimeler'])}"
+        konu = f"Resmi Gazete Gunluk Ozet: {len(yeni_maddeler)} yeni eslesme"
+        satirlar = [
+            f"- {madde['baslik']}\n  {madde['link']}\n  Eslesen kelimeler: {', '.join(madde['kelimeler'])}"
+            for madde in yeni_maddeler
+        ]
         govde = (
-            "Takip ettiginiz kelime(ler) ile eslesen yeni bir Resmi Gazete maddesi yayimlandi:\n\n"
-            f"{baslik}\n{link}\n\nEslesen kelimeler: {', '.join(bilgi['kelimeler'])}"
+            f"Takip ettiginiz kelimelerle eslesen {len(yeni_maddeler)} yeni Resmi Gazete maddesi var:\n\n"
+            + "\n\n".join(satirlar)
         )
         bildirim_epostasi_gonder(bilgi["email"], konu, govde)
 
@@ -319,6 +340,7 @@ def gunu_isle(cur, gun, takip_edilen_kelimeler):
     gazette_id = cur.fetchone()[0]
 
     eklenen = 0
+    gunluk_bildirimler = {}
     for row in rows:
         b = normalize_bolum(row["bolum"]).upper()
         tablo = None
@@ -353,10 +375,11 @@ def gunu_isle(cur, gun, takip_edilen_kelimeler):
         icerik_metni = icerik_bytes.decode("utf-8", errors="ignore") if icerik_bytes else ""
         eslesmeler = metinde_eslesen_kelimeleri_bul(row["title"] + " " + icerik_metni, takip_edilen_kelimeler)
         if eslesmeler:
-            madde_eslesmelerini_bildir(cur, eslesmeler, tablo, madde_id, row["title"], row["link"])
+            eslesmeleri_gunluk_ozete_ekle(gunluk_bildirimler, eslesmeler, tablo, madde_id, row["title"], row["link"])
 
         time.sleep(0.2)
 
+    gunluk_ozet_bildirimlerini_gonder(cur, gunluk_bildirimler)
     print(f"{gun}: {eklenen} satir veritabanina yazildi.")
     return eklenen
 
