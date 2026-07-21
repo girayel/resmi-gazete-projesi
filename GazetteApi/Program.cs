@@ -4,8 +4,10 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using System.Threading.RateLimiting;
 using GazetteApi.Models;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 
@@ -58,6 +60,36 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 builder.Services.AddAuthorization();
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // Giris/kayit denemeleri icin: IP basina dakikada 5 istek. Brute-force
+    // (sifre tahmin etmeye calisma) saldirilarini yavaslatmak icin.
+    options.AddPolicy("AuthPolicy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "bilinmeyen",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+
+    // Sifre sifirlama istegi icin daha siki bir sinir: IP basina 10 dakikada 3
+    // istek. Bu endpoint gercek e-posta gonderdigi icin (Gmail limiti ve
+    // kullanicinin spam'e bogulmasi riski) daha temkinli davraniyoruz.
+    options.AddPolicy("ForgotPasswordPolicy", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "bilinmeyen",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 3,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+            }));
+});
+
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -69,6 +101,7 @@ app.UseHttpsRedirection();
 app.UseCors(ReactDevPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 app.MapGet("/api/gazette-issues", async (int page = 1, int pageSize = 20, string? search = null) =>
 {
@@ -237,7 +270,8 @@ app.MapPost("/api/auth/register", async (RegisterRequest istek) =>
     var token = JwtTokenUret(userId, istek.Email, "user");
     return Results.Created($"/api/auth/register/{userId}", new AuthResponse(token, userId, istek.Email, "user"));
 })
-.WithName("Register");
+.WithName("Register")
+.RequireRateLimiting("AuthPolicy");
 
 app.MapPost("/api/auth/login", async (LoginRequest istek) =>
 {
@@ -269,7 +303,8 @@ app.MapPost("/api/auth/login", async (LoginRequest istek) =>
     var token = JwtTokenUret(userId, istek.Email, rol);
     return Results.Ok(new AuthResponse(token, userId, istek.Email, rol));
 })
-.WithName("Login");
+.WithName("Login")
+.RequireRateLimiting("AuthPolicy");
 
 app.MapPost("/api/auth/forgot-password", async (ForgotPasswordRequest istek) =>
 {
@@ -313,7 +348,8 @@ app.MapPost("/api/auth/forgot-password", async (ForgotPasswordRequest istek) =>
 
     return Results.Ok(new { mesaj = "Bu email kayitliysa, sifre sifirlama baglantisi gonderildi." });
 })
-.WithName("ForgotPassword");
+.WithName("ForgotPassword")
+.RequireRateLimiting("ForgotPasswordPolicy");
 
 app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest istek) =>
 {
@@ -355,7 +391,8 @@ app.MapPost("/api/auth/reset-password", async (ResetPasswordRequest istek) =>
 
     return Results.Ok(new { mesaj = "Sifreniz basariyla degistirildi." });
 })
-.WithName("ResetPassword");
+.WithName("ResetPassword")
+.RequireRateLimiting("AuthPolicy");
 
 app.MapGet("/api/auth/me", (ClaimsPrincipal kullanici) =>
 {
