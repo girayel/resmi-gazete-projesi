@@ -4,16 +4,33 @@ import '../Gazete.css'
 function MaddeListesi({ apiUrl, tarih, onGeri, onMaddeSec }) {
   const [maddeler, setMaddeler] = useState([])
   const [yukleniyor, setYukleniyor] = useState(true)
+  const [hata, setHata] = useState('')
   const [arama, setArama] = useState('')
 
   useEffect(() => {
+    const controller = new AbortController()
     setYukleniyor(true)
-    fetch(`${apiUrl}/api/gazette-issues/${tarih}`)
-      .then((cevap) => cevap.json())
+    setHata('')
+
+    fetch(`${apiUrl}/api/gazette-issues/${tarih}`, { signal: controller.signal })
+      .then((cevap) => {
+        if (!cevap.ok) {
+          throw new Error('yuklenemedi')
+        }
+        return cevap.json()
+      })
       .then((veri) => {
         setMaddeler(veri)
         setYukleniyor(false)
       })
+      .catch((hataNesnesi) => {
+        if (hataNesnesi.name !== 'AbortError') {
+          setHata('Sunucuya bağlanılamadı. API çalışıyor mu?')
+          setYukleniyor(false)
+        }
+      })
+
+    return () => controller.abort()
   }, [apiUrl, tarih])
 
   const filtrelenmis = useMemo(() => {
@@ -43,6 +60,8 @@ function MaddeListesi({ apiUrl, tarih, onGeri, onMaddeSec }) {
 
       {yukleniyor ? (
         <p className="bos-durum">Yükleniyor...</p>
+      ) : hata ? (
+        <p className="auth-hata">{hata}</p>
       ) : maddeler.length === 0 ? (
         <p className="bos-durum">Bu gün için madde bulunamadı.</p>
       ) : filtrelenmis.length === 0 ? (
