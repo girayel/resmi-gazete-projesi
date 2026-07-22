@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import KeywordPanel from './KeywordPanel'
 import '../Gazete.css'
+import KeywordHavuzuYonetimi from './KeywordHavuzuYonetimi'
 
 function AdminPanel({ apiUrl, token, onGeri }) {
   const [kullanicilar, setKullanicilar] = useState([])
@@ -46,25 +47,29 @@ function AdminPanel({ apiUrl, token, onGeri }) {
   return (
     <div className="sayfa">
       <button className="geri-buton" onClick={onGeri}>&larr; Geri</button>
-      <h1>Admin Paneli — Kullanıcılar</h1>
+      <h1>Admin Paneli</h1>
+      <KeywordHavuzuYonetimi apiUrl={apiUrl} token={token} />
 
-      {yukleniyor ? (
-        <p className="sayfa">Yükleniyor...</p>
-      ) : hata ? (
-        <p className="auth-hata">{hata}</p>
-      ) : kullanicilar.length === 0 ? (
-        <p className="bos-durum">Henüz hiç kullanıcı yok.</p>
-      ) : (
-        <ul className="gazete-liste">
-          {kullanicilar.map((kullanici) => (
-            <li key={kullanici.id}>
-              <button onClick={() => setSeciliKullanici(kullanici)}>
-                {kullanici.email} <span className="bolum-etiket">{kullanici.role}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <section className="panel-kutu">
+        <h2>Kullanıcılar</h2>
+        {yukleniyor ? (
+          <p className="sayfa">Yükleniyor...</p>
+        ) : hata ? (
+          <p className="auth-hata">{hata}</p>
+        ) : kullanicilar.length === 0 ? (
+          <p className="bos-durum">Henüz hiç kullanıcı yok.</p>
+        ) : (
+          <ul className="gazete-liste">
+            {kullanicilar.map((kullanici) => (
+              <li key={kullanici.id}>
+                <button onClick={() => setSeciliKullanici(kullanici)}>
+                  {kullanici.email} <span className="bolum-etiket">{kullanici.role}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

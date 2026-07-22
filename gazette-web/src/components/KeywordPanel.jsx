@@ -96,23 +96,25 @@ function KeywordPanel({
       ) : (
         <>
           {hata && <p className="auth-hata">{hata}</p>}
-          <ul className="keyword-liste">
-            {havuz.map((keyword) => {
-              const secili = secilenIdler.has(keyword.id)
-              return (
-                <li key={keyword.id}>
-                  <button
-                    className={secili ? 'keyword-pill keyword-pill-secili' : 'keyword-pill'}
-                    disabled={islemdeId === keyword.id}
-                    onClick={() => degistir(keyword)}
-                  >
-                    {secili ? '✓ ' : ''}
-                    {keyword.keyword}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+    <div className="keyword-kutu">
+      <ul className="keyword-liste">
+        {havuz.map((keyword) => {
+          const secili = secilenIdler.has(keyword.id)
+          return (
+            <li key={keyword.id}>
+              <button
+                className={secili ? 'keyword-pill keyword-pill-secili' : 'keyword-pill'}
+                disabled={islemdeId === keyword.id}
+                onClick={() => degistir(keyword)}
+              >
+                {secili ? '✓ ' : ''}
+                {keyword.keyword}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+      </div>
         </>
       )}
     </div>

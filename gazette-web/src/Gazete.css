@@ -200,19 +200,34 @@
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px 0;
+  gap: 4px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-bg);
   font-size: 14px;
   color: var(--text);
 }
 
+.ust-bar span {
+  margin-right: 8px;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
 .ust-bar button {
   background: none;
-  border: none;
+  border: 1px solid transparent;
   color: var(--accent);
   cursor: pointer;
   font: inherit;
-  padding: 0;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ust-bar button:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
 }
 
 .keyword-aciklama {
@@ -254,4 +269,58 @@
   background: var(--accent-bg);
   color: var(--accent);
   font-weight: 600;
+}
+.keyword-havuz-satir {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--code-bg);
+}
+
+.keyword-havuz-sil {
+  background: none;
+  border: none;
+  color: var(--text-h);
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+
+.keyword-havuz-sil:hover {
+  opacity: 1;
+  color: #d33;
+}
+
+.keyword-havuz-sil:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.panel-kutu {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 20px;
+  background: var(--code-bg);
+}
+
+.panel-kutu h2 {
+  margin-bottom: 12px;
+}
+
+.keyword-havuz-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.keyword-havuz-form .arama-kutusu {
+  margin-bottom: 0;
+}
+
+.keyword-havuz-form button {
+  flex-shrink: 0;
 }
