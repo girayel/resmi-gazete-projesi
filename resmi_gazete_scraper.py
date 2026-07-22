@@ -146,14 +146,25 @@ def takip_edilen_kelimeleri_getir(cur):
     return takip
 
 
-def metinde_eslesen_kelimeleri_bul(metin, takip_edilen_kelimeler):
-    """Verilen metin icinde (buyuk/kucuk harf duyarsiz) hangi takip edilen
-    keyword'lerin gectigini bulur. {keyword: [(user_id, email), ...]} dondurur -
-    sadece metinde gecen keyword'ler sonuca girer."""
-    metin_kucuk = metin.casefold()
+def kelime_desenleri_olustur(takip_edilen_kelimeler):
+    """Her keyword icin, metinde bir kelimenin BASLANGICI olarak gecip gecmedigini
+    kontrol eden bir regex derler. Sadece sol tarafta \b (kelime siniri) araniyor;
+    sag tarafta aranmiyor cunku Turkce eklemeli bir dil - 'kanun' koku metinde
+    neredeyse hep 'kanunun', 'kanuna', 'kanunla' gibi ek almis halde gecer, bunlari
+    kacirmamak icin sag sinir zorunlu tutulmuyor. Sol sinir sayesinde 'muhtac',
+    'taraf' gibi kelimenin ORTASINDA rastgele gecen harf dizileri hala eslesmez."""
+    return {
+        keyword: re.compile(r"\b" + re.escape(keyword), re.IGNORECASE)
+        for keyword in takip_edilen_kelimeler
+    }
+
+
+def metinde_eslesen_kelimeleri_bul(metin, takip_edilen_kelimeler, kelime_desenleri):
+    """Verilen metin icinde, takip edilen keyword'lerden hangilerinin bagimsiz
+    bir kelime olarak gectigini bulur. {keyword: [(user_id, email), ...]} dondurur."""
     eslesmeler = {}
     for keyword, takipciler in takip_edilen_kelimeler.items():
-        if keyword.casefold() in metin_kucuk:
+        if kelime_desenleri[keyword].search(metin):
             eslesmeler[keyword] = takipciler
     return eslesmeler
 
@@ -288,7 +299,7 @@ def madde_icerigini_getir(link):
     return metin.encode("utf-8"), content_type
 
 
-def gunu_isle(cur, gun, takip_edilen_kelimeler):
+def gunu_isle(cur, gun, takip_edilen_kelimeler, kelime_desenleri):
     url = gunluk_url_olustur(gun)
     try:
         response = requests.get(url, headers=headers, timeout=15)
@@ -373,7 +384,7 @@ def gunu_isle(cur, gun, takip_edilen_kelimeler):
         eklenen += 1
 
         icerik_metni = icerik_bytes.decode("utf-8", errors="ignore") if icerik_bytes else ""
-        eslesmeler = metinde_eslesen_kelimeleri_bul(row["title"] + " " + icerik_metni, takip_edilen_kelimeler)
+        eslesmeler = metinde_eslesen_kelimeleri_bul(row["title"] + " " + icerik_metni, takip_edilen_kelimeler, kelime_desenleri)
         if eslesmeler:
             eslesmeleri_gunluk_ozete_ekle(gunluk_bildirimler, eslesmeler, tablo, madde_id, row["title"], row["link"])
 
@@ -408,11 +419,12 @@ try:
             continue
 
         takip_edilen_kelimeler = takip_edilen_kelimeleri_getir(cur)
+        kelime_desenleri = kelime_desenleri_olustur(takip_edilen_kelimeler)
         print(f"Yeni batch: {len(bekleyenler)} gun islenecek ({bekleyenler[0]} - {bekleyenler[-1]}), "
               f"{len(takip_edilen_kelimeler)} kelime takip ediliyor.")
         for gun in bekleyenler:
             try:
-                gunu_isle(cur, gun, takip_edilen_kelimeler)
+                gunu_isle(cur, gun, takip_edilen_kelimeler, kelime_desenleri)
                 conn.commit()
             except Exception as e:
                 conn.rollback()
