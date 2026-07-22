@@ -79,12 +79,6 @@ def gunluk_url_olustur(gun):
     return f"https://www.resmigazete.gov.tr/eskiler/{gun.year}/{gun.month:02d}/{gun.year}{gun.month:02d}{gun.day:02d}.htm"
 
 
-def gazette_id_var_mi(cur, gun):
-    cur.execute("SELECT id FROM gazette_issue WHERE date = %s", (gun,))
-    sonuc = cur.fetchone()
-    return sonuc[0] if sonuc else None
-
-
 # ========== JOB: HATA LOGLAMA ==========
 def error_log_tablosunu_olustur(cur):
     cur.execute(
