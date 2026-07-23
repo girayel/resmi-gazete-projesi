@@ -151,8 +151,7 @@ function GunListesi({ apiUrl, onGunSec, onMaddeSec }) {
 
   return (
     <div className="sayfa takvim-sayfa">
-      <h1>Resmî Gazete — Günler</h1>
-
+    <h1>Resmî Gazete — {aramaAktif ? 'Arama Sonuçları' : 'Günler'}</h1>
       <input
         className="arama-kutusu"
         type="text"
