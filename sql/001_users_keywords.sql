@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS keywords (
 );
 
 -- 3) Kullanici <-> keyword eslesmesi (many-to-many).
+--
 -- added_by_user_id: NULL ise kullanici kendisi eklemistir, doluysa bir admin
 -- baska bir kullanici adina bu kelimeyi eklemistir.
 CREATE TABLE IF NOT EXISTS user_keywords (

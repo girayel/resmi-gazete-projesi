@@ -13,6 +13,9 @@ import fitz
 import pytesseract
 from PIL import Image
 import io
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 load_dotenv()
 db_password = os.getenv("DB_PASSWORD")
