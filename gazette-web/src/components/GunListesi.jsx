@@ -14,10 +14,7 @@ function ayParametresi(yil, ay) {
   return `${yil}-${String(ay).padStart(2, '0')}`
 }
 
-function GunListesi({ apiUrl, onGunSec, onMaddeSec }) {
-  const bugun = useMemo(() => new Date(), [])
-  const [secilenYil, setSecilenYil] = useState(bugun.getFullYear())
-  const [secilenAy, setSecilenAy] = useState(bugun.getMonth() + 1)
+function GunListesi({ apiUrl, onGunSec, onMaddeSec, secilenYil, secilenAy, setSecilenYil, setSecilenAy }) {
 
   const [gunHaritasi, setGunHaritasi] = useState({})
   const [yukleniyor, setYukleniyor] = useState(true)

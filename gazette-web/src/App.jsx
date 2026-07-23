@@ -13,6 +13,8 @@ const OTURUM_SURESI_DK=120
 function App() {
   const [seciliTarih, setSeciliTarih] = useState(null)
   const [seciliMadde, setSeciliMadde] = useState(null)
+  const [secilenYil, setSecilenYil] = useState(() => new Date().getFullYear())
+  const [secilenAy, setSecilenAy] = useState(() => new Date().getMonth() + 1)
   const [gorunum, setGorunum] = useState('gazete')
   const [kullanici, setKullanici] = useState(() => {
     const kayitli = localStorage.getItem('gazette_kullanici')
@@ -115,7 +117,15 @@ function App() {
           onMaddeSec={setSeciliMadde}
         />
       ) : (
-        <GunListesi apiUrl={API_URL} onGunSec={setSeciliTarih} onMaddeSec={setSeciliMadde}/>
+      <GunListesi
+        apiUrl={API_URL}
+        onGunSec={setSeciliTarih}
+        onMaddeSec={setSeciliMadde}
+        secilenYil={secilenYil}
+        secilenAy={secilenAy}
+        setSecilenYil={setSecilenYil}
+        setSecilenAy={setSecilenAy}
+      />     
       )}
     </>
   )
