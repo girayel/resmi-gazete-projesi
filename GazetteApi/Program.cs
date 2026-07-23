@@ -232,6 +232,82 @@ app.MapGet("/api/gazette-issues/{tarih}", async (string tarih) =>
 })
 .WithName("GetMaddelerByTarih");
 
+app.MapGet("/api/madde-arama", async (string? q, int page = 1, int pageSize = 20) =>
+{
+    if (string.IsNullOrWhiteSpace(q))
+    {
+        return Results.Ok(new MaddeAramaSonucuPage { Page = page, PageSize = pageSize });
+    }
+
+    page = Math.Max(1, page);
+    pageSize = Math.Clamp(pageSize, 1, 100);
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    var tablolar = new[]
+    {
+        ("legislative", "legislative_section"),
+        ("executive", "executive_administrative_section"),
+        ("judicial", "judicial_section"),
+        ("announcement", "announcement_section"),
+    };
+
+    var birlesmisSorgu = string.Join(" UNION ALL ", tablolar.Select(t =>
+        $"SELECT '{t.Item1}' AS bolum, m.id, m.gazette_id, gi.date, m.title, m.link, m.content_type, m.pdf_content " +
+        $"FROM {t.Item2} m JOIN gazette_issue gi ON gi.id = m.gazette_id " +
+        "WHERE m.title ILIKE @q OR (m.pdf_content IS NOT NULL AND convert_from(m.pdf_content, 'UTF8') ILIKE @q)"));
+
+    int toplamKayit;
+    await using (var sayimCmd = new NpgsqlCommand($"SELECT COUNT(*) FROM ({birlesmisSorgu}) t", conn))
+    {
+        sayimCmd.Parameters.AddWithValue("q", $"%{q}%");
+        toplamKayit = Convert.ToInt32(await sayimCmd.ExecuteScalarAsync());
+    }
+
+    var sonuclar = new List<MaddeAramaSonucu>();
+    await using (var cmd = new NpgsqlCommand(
+        $"SELECT bolum, id, gazette_id, date, title, link, content_type, pdf_content FROM ({birlesmisSorgu}) t " +
+        "ORDER BY date DESC OFFSET @offset LIMIT @limit", conn))
+    {
+        cmd.Parameters.AddWithValue("q", $"%{q}%");
+        cmd.Parameters.AddWithValue("offset", (page - 1) * pageSize);
+        cmd.Parameters.AddWithValue("limit", pageSize);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            string? icerik = null;
+            if (!reader.IsDBNull(7))
+            {
+                var baytlar = (byte[])reader.GetValue(7);
+                icerik = Encoding.UTF8.GetString(baytlar);
+            }
+
+            sonuclar.Add(new MaddeAramaSonucu
+            {
+                Bolum = reader.GetString(0),
+                Id = reader.GetInt32(1),
+                GazetteId = reader.GetInt32(2),
+                Date = DateOnly.FromDateTime(reader.GetDateTime(3)),
+                Title = reader.GetString(4),
+                Link = reader.GetString(5),
+                ContentType = reader.IsDBNull(6) ? null : reader.GetString(6),
+                Icerik = icerik,
+            });
+        }
+    }
+
+    return Results.Ok(new MaddeAramaSonucuPage
+    {
+        Items = sonuclar,
+        TotalCount = toplamKayit,
+        Page = page,
+        PageSize = pageSize,
+    });
+})
+.WithName("MaddeArama");
+
 app.MapPost("/api/auth/register", async (RegisterRequest istek) =>
 {
     if (string.IsNullOrWhiteSpace(istek.Email) || string.IsNullOrWhiteSpace(istek.Password))

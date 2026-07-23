@@ -324,3 +324,94 @@
 .keyword-havuz-form button {
   flex-shrink: 0;
 }
+.takvim-sayfa {
+  max-width: 900px;
+}
+
+.takvim-baslik {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.takvim-ay-yil {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-h);
+  min-width: 160px;
+  text-align: center;
+}
+
+.takvim-ok {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 16px;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+}
+
+.takvim-ok:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+}
+
+.takvim-izgara {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.takvim-hafta-basligi {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 6px 0;
+}
+
+.takvim-hucre {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+}
+
+.takvim-hucre-bos {
+  border: none;
+  background: none;
+}
+
+.takvim-hucre-dolu {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--text-h);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.takvim-hucre-dolu:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.takvim-gun-no {
+  font-size: 16px;
+}
+
+.takvim-sayi {
+  font-size: 10px;
+  opacity: 0.8;
+}

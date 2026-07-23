@@ -115,7 +115,7 @@ function App() {
           onMaddeSec={setSeciliMadde}
         />
       ) : (
-        <GunListesi apiUrl={API_URL} onGunSec={setSeciliTarih} />
+        <GunListesi apiUrl={API_URL} onGunSec={setSeciliTarih} onMaddeSec={setSeciliMadde}/>
       )}
     </>
   )
