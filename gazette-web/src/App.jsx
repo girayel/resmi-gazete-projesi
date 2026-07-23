@@ -17,8 +17,8 @@ function App() {
   const [secilenAy, setSecilenAy] = useState(() => new Date().getMonth() + 1)
   const [gorunum, setGorunum] = useState('gazete')
   const [kullanici, setKullanici] = useState(() => {
-    const kayitli = localStorage.getItem('gazette_kullanici')
-    return kayitli ? JSON.parse(kayitli) : null
+  const kayitli = localStorage.getItem('gazette_kullanici')
+  return kayitli ? JSON.parse(kayitli) : null
   })
   const [misafir, setMisafir] = useState(false)
   const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('resetToken'))
@@ -90,7 +90,7 @@ function App() {
             </button>
             {kullanici.role === 'admin' && (
               <button onClick={() => setGorunum(gorunum === 'admin' ? 'gazete' : 'admin')}>
-                {gorunum === 'admin' ? 'Gazeteye dön' : 'Kullanıcılar'}
+                {gorunum === 'admin' ? 'Gazeteye dön' : 'Admin Paneli'}
               </button>
             )}
             <button onClick={cikisYap}>Çıkış yap</button>
