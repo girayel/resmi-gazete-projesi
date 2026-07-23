@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import '../Gazete.css'
+import { apiFetch } from '../apiClient'
 
 function KeywordPanel({
   apiUrl,
@@ -24,8 +25,8 @@ function KeywordPanel({
       setHata('')
       try {
         const [havuzCevap, secilenlerCevap] = await Promise.all([
-          fetch(`${apiUrl}/api/keywords`, { headers, signal: controller.signal }),
-          fetch(`${apiUrl}${keywordsYolu}`, { headers, signal: controller.signal }),
+          apiFetch(`${apiUrl}/api/keywords`, { headers, signal: controller.signal }),
+          apiFetch(`${apiUrl}${keywordsYolu}`, { headers, signal: controller.signal }),
         ])
         if (!havuzCevap.ok || !secilenlerCevap.ok) {
           setHata('Kelimeler yüklenemedi.')
@@ -52,7 +53,7 @@ function KeywordPanel({
     setHata('')
 
     try {
-      const cevap = await fetch(
+      const cevap = await apiFetch(
         `${apiUrl}${keywordsYolu}${secili ? `/${keyword.id}` : ''}`,
         {
           method: secili ? 'DELETE' : 'POST',

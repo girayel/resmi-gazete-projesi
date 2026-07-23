@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import KeywordPanel from './KeywordPanel'
 import '../Gazete.css'
 import KeywordHavuzuYonetimi from './KeywordHavuzuYonetimi'
+import { apiFetch } from '../apiClient'
 
 function AdminPanel({ apiUrl, token, onGeri }) {
   const [kullanicilar, setKullanicilar] = useState([])
@@ -12,7 +13,7 @@ function AdminPanel({ apiUrl, token, onGeri }) {
   useEffect(() => {
     const controller = new AbortController()
 
-    fetch(`${apiUrl}/api/admin/users`, {
+    apiFetch(`${apiUrl}/api/admin/users`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     })

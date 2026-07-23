@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import '../Gazete.css'
+import { apiFetch } from '../apiClient'
 
 function KeywordHavuzuYonetimi({ apiUrl, token }) {
   const [havuz, setHavuz] = useState([])
@@ -14,7 +15,7 @@ function KeywordHavuzuYonetimi({ apiUrl, token }) {
     setYukleniyor(true)
     setHata('')
 
-    fetch(`${apiUrl}/api/keywords`, {
+    apiFetch(`${apiUrl}/api/keywords`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     })
@@ -39,7 +40,7 @@ function KeywordHavuzuYonetimi({ apiUrl, token }) {
     setEkleniyor(true)
     setHata('')
     try {
-      const cevap = await fetch(`${apiUrl}/api/keywords`, {
+      const cevap = await apiFetch(`${apiUrl}/api/keywords`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -74,7 +75,7 @@ function KeywordHavuzuYonetimi({ apiUrl, token }) {
     setSilinenId(keyword.id)
     setHata('')
     try {
-      const cevap = await fetch(`${apiUrl}/api/keywords/${keyword.id}`, {
+      const cevap = await apiFetch(`${apiUrl}/api/keywords/${keyword.id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })

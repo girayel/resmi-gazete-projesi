@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import '../Gazete.css'
 
-function Auth({ apiUrl, onGirisBasarili, onMisafirDevam }) {
+function Auth({ apiUrl, onGirisBasarili, onMisafirDevam, bilgiMesaji }) {
   const [mod, setMod] = useState('login')
   const [email, setEmail] = useState('')
   const [sifre, setSifre] = useState('')
   const [hata, setHata] = useState('')
-  const [basariMesaji, setBasariMesaji] = useState('')
+  const [basariMesaji, setBasariMesaji]=useState('')
   const [gonderiliyor, setGonderiliyor] = useState(false)
 
   const modDegistir = (yeniMod) => {
@@ -22,21 +22,23 @@ function Auth({ apiUrl, onGirisBasarili, onMisafirDevam }) {
     setGonderiliyor(true)
 
     try {
-      if (mod === 'forgot') {
-        const cevap = await fetch(`${apiUrl}/api/auth/forgot-password`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
-        })
-        const veri = await cevap.json().catch(() => null)
-        setBasariMesaji(veri?.mesaj ?? 'İstek gönderildi, e-postanı kontrol et.')
-        return
+      if(mod=='forgot'){
+        const cevap = await 
+      fetch(`${apiUrl}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      })
+      
+      const veri=await cevap.json().catch(()=>null)
+      setBasariMesaji(veri?.mesaj ?? 'İstek gönderildi. Lütfen emailinizi kontrol edin.')
+      return
       }
 
       const cevap = await fetch(`${apiUrl}/api/auth/${mod === 'login' ? 'login' : 'register'}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password: sifre }),
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify({ email, password: sifre }),
       })
 
       if (!cevap.ok) {
@@ -63,60 +65,57 @@ function Auth({ apiUrl, onGirisBasarili, onMisafirDevam }) {
   return (
     <div className="sayfa auth-sayfa">
       <h1>Resmî Gazete</h1>
+      {bilgiMesaji && <p className="auth-hata">{bilgiMesaji}</p>}
 
       {mod !== 'forgot' && (
         <div className="auth-sekme">
           <button
             className={mod === 'login' ? 'auth-sekme-aktif' : ''}
             onClick={() => modDegistir('login')}
-          >
+            >
             Giriş Yap
           </button>
           <button
             className={mod === 'register' ? 'auth-sekme-aktif' : ''}
             onClick={() => modDegistir('register')}
-          >
-            Kayıt Ol
-          </button>
-        </div>
+            >
+               
+          Kayıt Ol
+        </button>
+      </div>
       )}
 
       {basariMesaji ? (
         <p className="auth-basari">{basariMesaji}</p>
       ) : (
-        <form className="auth-form" onSubmit={gonder}>
+        <form className="auth-form" onSubmit={gonder}>  
+        <input
+          className="arama-kutusu"
+          type="email"
+          placeholder="Email"
+          value={email}
+          onChange={(olay) => setEmail(olay.target.value)}
+          required
+        />
+        {mod !== 'forgot' && (
           <input
             className="arama-kutusu"
-            type="email"
-            placeholder="Email"
-            value={email}
-            onChange={(olay) => setEmail(olay.target.value)}
+            type="password"
+            placeholder="Şifre (en az 6 karakter)"
+            value={sifre}
+            onChange={(olay) => setSifre(olay.target.value)}
+            minLength={6}
             required
           />
-          {mod !== 'forgot' && (
-            <input
-              className="arama-kutusu"
-              type="password"
-              placeholder="Şifre (en az 6 karakter)"
-              value={sifre}
-              onChange={(olay) => setSifre(olay.target.value)}
-              minLength={6}
-              required
-            />
-          )}
+        )}
 
-          {hata && <p className="auth-hata">{hata}</p>}
+        {hata && <p className="auth-hata">{hata}</p>}
 
-          <button type="submit" className="auth-gonder-buton" disabled={gonderiliyor}>
-            {gonderiliyor
-              ? 'Gönderiliyor...'
-              : mod === 'login'
-                ? 'Giriş Yap'
-                : mod === 'register'
-                  ? 'Kayıt Ol'
-                  : 'Sıfırlama Bağlantısı Gönder'}
-          </button>
-        </form>
+        <button type="submit" className="auth-gonder-buton" disabled={gonderiliyor}>
+          {gonderiliyor ? 'Gönderiliyor...' : mod === 'login' ? 'Giriş Yap' : mod === 'register' ? 'Kayıt Ol' : 'Sıfırlama Bağlantısı Gönder'}
+        </button>
+      </form>   
+
       )}
 
       {mod === 'login' && !basariMesaji && (
@@ -124,10 +123,11 @@ function Auth({ apiUrl, onGirisBasarili, onMisafirDevam }) {
           Şifremi unuttum
         </button>
       )}
-      {mod === 'forgot' && (
+      {mod==='forgot' && (
         <button className="auth-sifremi-unuttum" onClick={() => modDegistir('login')}>
           ← Giriş ekranına dön
         </button>
+
       )}
 
       <button className="geri-buton" onClick={onMisafirDevam}>
