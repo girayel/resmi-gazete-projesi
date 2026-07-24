@@ -357,8 +357,9 @@ app.MapPost("/api/auth/login", async (LoginRequest istek) =>
     int userId;
     string sifreHash;
     string rol;
+    bool aktifMi;
     await using (var cmd = new NpgsqlCommand(
-        "SELECT id, password_hash, role FROM users WHERE email = @email", conn))
+        "SELECT id, password_hash, role, is_active FROM users WHERE email = @email", conn))
     {
         cmd.Parameters.AddWithValue("email", istek.Email);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -369,11 +370,17 @@ app.MapPost("/api/auth/login", async (LoginRequest istek) =>
         userId = reader.GetInt32(0);
         sifreHash = reader.GetString(1);
         rol = reader.GetString(2);
+        aktifMi = reader.GetBoolean(3);
     }
 
     if (!BCrypt.Net.BCrypt.Verify(istek.Password, sifreHash))
     {
         return Results.Unauthorized();
+    }
+
+    if (!aktifMi)
+    {
+        return Results.Json(new { hata = "Hesabiniz pasif durumda. Yonetici ile iletisime gecin." }, statusCode: 403);
     }
 
     var token = JwtTokenUret(userId, istek.Email, rol);
@@ -487,7 +494,7 @@ app.MapGet("/api/admin/users", async () =>
 
     var kullanicilar = new List<UserSummary>();
     await using var cmd = new NpgsqlCommand(
-        "SELECT id, email, role, created_at FROM users ORDER BY id", conn);
+        "SELECT id, email, role, created_at, is_active FROM users ORDER BY id", conn);
 
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync())
@@ -496,7 +503,8 @@ app.MapGet("/api/admin/users", async () =>
             reader.GetInt32(0),
             reader.GetString(1),
             reader.GetString(2),
-            reader.GetFieldValue<DateTimeOffset>(3)));
+            reader.GetFieldValue<DateTimeOffset>(3),
+            reader.GetBoolean(4)));
     }
 
     return Results.Ok(kullanicilar);
@@ -683,6 +691,83 @@ app.MapDelete("/api/admin/users/{userId:int}/keywords/{keywordId:int}", async (i
 })
 .RequireAuthorization(policy => policy.RequireRole("admin"))
 .WithName("AdminRemoveUserKeyword");
+
+app.MapPatch("/api/admin/users/{userId:int}/role", async (ClaimsPrincipal admin, int userId, UpdateUserRoleRequest istek) =>
+{
+    var adminId = int.Parse(admin.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+    if (userId == adminId)
+    {
+        return Results.BadRequest(new { hata = "Kendi rolunu degistiremezsin." });
+    }
+    if (istek.Role != "admin" && istek.Role != "user")
+    {
+        return Results.BadRequest(new { hata = "Rol 'admin' ya da 'user' olmalidir." });
+    }
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    if (!await KullaniciVarMi(conn, userId))
+    {
+        return Results.NotFound(new { hata = "Bu id ile bir kullanici bulunamadi." });
+    }
+
+    await using var cmd = new NpgsqlCommand("UPDATE users SET role = @role WHERE id = @userId", conn);
+    cmd.Parameters.AddWithValue("role", istek.Role);
+    cmd.Parameters.AddWithValue("userId", userId);
+    await cmd.ExecuteNonQueryAsync();
+
+    return Results.Ok(new { userId, role = istek.Role });
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminUpdateUserRole");
+
+app.MapPatch("/api/admin/users/{userId:int}/status", async (ClaimsPrincipal admin, int userId, UpdateUserStatusRequest istek) =>
+{
+    var adminId = int.Parse(admin.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+    if (userId == adminId)
+    {
+        return Results.BadRequest(new { hata = "Kendi hesabini pasif yapamazsin." });
+    }
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    if (!await KullaniciVarMi(conn, userId))
+    {
+        return Results.NotFound(new { hata = "Bu id ile bir kullanici bulunamadi." });
+    }
+
+    await using var cmd = new NpgsqlCommand("UPDATE users SET is_active = @isActive WHERE id = @userId", conn);
+    cmd.Parameters.AddWithValue("isActive", istek.IsActive);
+    cmd.Parameters.AddWithValue("userId", userId);
+    await cmd.ExecuteNonQueryAsync();
+
+    return Results.Ok(new { userId, isActive = istek.IsActive });
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminUpdateUserStatus");
+
+app.MapDelete("/api/admin/users/{userId:int}", async (ClaimsPrincipal admin, int userId) =>
+{
+    var adminId = int.Parse(admin.FindFirstValue(JwtRegisteredClaimNames.Sub)!);
+    if (userId == adminId)
+    {
+        return Results.BadRequest(new { hata = "Kendi hesabini silemezsin." });
+    }
+
+    await using var conn = new NpgsqlConnection(connectionString);
+    await conn.OpenAsync();
+
+    await using var cmd = new NpgsqlCommand("DELETE FROM users WHERE id = @userId", conn);
+    cmd.Parameters.AddWithValue("userId", userId);
+    var silinenSatir = await cmd.ExecuteNonQueryAsync();
+
+    return silinenSatir == 0 ? Results.NotFound(new { hata = "Bu id ile bir kullanici bulunamadi." }) : Results.NoContent();
+})
+.RequireAuthorization(policy => policy.RequireRole("admin"))
+.WithName("AdminDeleteUser");
+
 
 app.Run();
 

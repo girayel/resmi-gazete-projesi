@@ -9,6 +9,7 @@ function AdminPanel({ apiUrl, token, onGeri }) {
   const [yukleniyor, setYukleniyor] = useState(true)
   const [hata, setHata] = useState('')
   const [seciliKullanici, setSeciliKullanici] = useState(null)
+  const [islemHatasi, setIslemHatasi] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -32,6 +33,55 @@ function AdminPanel({ apiUrl, token, onGeri }) {
     return () => controller.abort()
   }, [apiUrl, token])
 
+  const rolDegistir = async (kullanici) => {
+    setIslemHatasi('')
+    const yeniRol = kullanici.role === 'admin' ? 'user' : 'admin'
+    const cevap = await apiFetch(`${apiUrl}/api/admin/users/${kullanici.id}/role`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ role: yeniRol }),
+    })
+    if (!cevap.ok) {
+      const veri = await cevap.json().catch(() => null)
+      setIslemHatasi(veri?.hata ?? 'Rol değiştirilemedi.')
+      return
+    }
+    setKullanicilar((liste) => liste.map((k) => (k.id === kullanici.id ? { ...k, role: yeniRol } : k)))
+  }
+
+  const durumDegistir = async (kullanici) => {
+    setIslemHatasi('')
+    const yeniDurum = !kullanici.isActive
+    const cevap = await apiFetch(`${apiUrl}/api/admin/users/${kullanici.id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ isActive: yeniDurum }),
+    })
+    if (!cevap.ok) {
+      const veri = await cevap.json().catch(() => null)
+      setIslemHatasi(veri?.hata ?? 'Durum değiştirilemedi.')
+      return
+    }
+    setKullanicilar((liste) => liste.map((k) => (k.id === kullanici.id ? { ...k, isActive: yeniDurum } : k)))
+  }
+
+  const kullaniciSil = async (kullanici) => {
+    setIslemHatasi('')
+    if (!window.confirm(`${kullanici.email} kullanicisini silmek istedigine emin misin? Bu islem geri alinamaz.`)) {
+      return
+    }
+    const cevap = await apiFetch(`${apiUrl}/api/admin/users/${kullanici.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!cevap.ok) {
+      const veri = await cevap.json().catch(() => null)
+      setIslemHatasi(veri?.hata ?? 'Kullanici silinemedi.')
+      return
+    }
+    setKullanicilar((liste) => liste.filter((k) => k.id !== kullanici.id))
+  }
+
   if (seciliKullanici) {
     return (
       <KeywordPanel
@@ -53,6 +103,7 @@ function AdminPanel({ apiUrl, token, onGeri }) {
 
       <section className="panel-kutu">
         <h2>Kullanıcılar</h2>
+        {islemHatasi && <p className="auth-hata">{islemHatasi}</p>}
         {yukleniyor ? (
           <p className="sayfa">Yükleniyor...</p>
         ) : hata ? (
@@ -64,7 +115,17 @@ function AdminPanel({ apiUrl, token, onGeri }) {
             {kullanicilar.map((kullanici) => (
               <li key={kullanici.id}>
                 <button onClick={() => setSeciliKullanici(kullanici)}>
-                  {kullanici.email} <span className="bolum-etiket">{kullanici.role}</span>
+                  {kullanici.email} <span className="bolum-etiket">{kullanici.role}</span>{' '}
+                  <span className="bolum-etiket">{kullanici.isActive ? 'aktif' : 'pasif'}</span>
+                </button>
+                <button onClick={() => rolDegistir(kullanici)}>
+                  {kullanici.role === 'admin' ? 'Kullanıcı yap' : 'Admin yap'}
+                </button>
+                                <button onClick={() => durumDegistir(kullanici)}>
+                  {kullanici.isActive ? 'Pasif yap' : 'Aktif yap'}
+                </button>
+                <button onClick={() => kullaniciSil(kullanici)}>
+                  Sil
                 </button>
               </li>
             ))}
